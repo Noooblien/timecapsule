@@ -1,0 +1,111 @@
+# TimeCapsule ⏳
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Noooblien/timecapsule)](https://goreportcard.com/report/github.com/Noooblien/timecapsule)
+[![CI](https://github.com/Noooblien/timecapsule/actions/workflows/ci.yml/badge.svg)](https://github.com/Noooblien/timecapsule/actions)
+
+**Personal Wayback Machine & Self-Hosted Web Archival Engine in Go.**
+
+Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 28500 WARC files, offline reader Markdown, verbatim HTML snapshots, and provides an instant Wayback Machine web replay UI.
+
+---
+
+## Features
+
+- ⚡ **Zero Dependencies**: Pure Go standard library. No Python virtualenvs, no headless Chrome bloat, no heavy databases.
+- 📦 **ISO 28500 WARC Standard**: Emits archival-grade WARC response records compatible with the Internet Archive, Wayback Machine, and WACZ tools.
+- 📄 **Clean Reader Markdown**: Automatically strips scripts, ads, and noise, outputting beautiful clean Markdown ready for offline reading and AI/LLM ingestion.
+- ⏳ **Wayback Time-Travel Replay**: Built-in HTTP replay server recreating the Wayback Machine URL structure (`/web/<timestamp>/<url>`) with retro archive banners.
+- 🔍 **Full-Text Search**: Search through historical pages by title, URL, or article content.
+- 🖥️ **Modern Dark-Mode Dashboard**: Lightweight built-in web interface for preserving and exploring historical snapshots.
+
+---
+
+## Quickstart
+
+### Installation
+
+```bash
+go install github.com/Noooblien/timecapsule/cmd/timecapsule@latest
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/Noooblien/timecapsule.git
+cd timecapsule
+go build -o timecapsule ./cmd/timecapsule
+```
+
+---
+
+## Usage
+
+### 1. Preserve a Web Page
+```bash
+timecapsule save https://news.ycombinator.com
+```
+```text
+⏳ Capturing snapshot of https://news.ycombinator.com...
+✅ Preserved successfully!
+  ID:        tc_20261018000400_a3f19e8c
+  Title:     Hacker News
+  Timestamp: 2026-10-18T00:04:00Z (Wayback: 20261018000400)
+  Size:      18,452 bytes (14 assets)
+  Hash:      a3f19e8c9284f...
+  Replay:    /web/20261018000400/https://news.ycombinator.com
+```
+
+### 2. Launch the Wayback Replay Web Server
+```bash
+timecapsule serve --port 8080
+```
+Open `http://localhost:8080` in your browser to browse your personal archive or replay historical pages at:
+`http://localhost:8080/web/20261018000400/https://news.ycombinator.com`
+
+### 3. List Archived Snapshots
+```bash
+timecapsule list
+```
+
+### 4. Search Historical Pages
+```bash
+timecapsule search "artificial intelligence"
+```
+
+### 5. View Reader Markdown in Terminal
+```bash
+timecapsule view tc_20261018000400_a3f19e8c
+```
+
+---
+
+## Storage Directory Layout
+
+By default, TimeCapsule stores archives in `~/.timecapsule`:
+
+```
+~/.timecapsule/
+├── index.json               # Fast search & metadata catalog
+└── capsules/
+    └── tc_20261018000400_a3f19e8c/
+        ├── index.html       # Verbatim captured HTML
+        ├── content.md       # Clean extracted reader markdown
+        └── archive.warc     # Standard ISO 28500 WARC file
+```
+
+---
+
+## Testing
+
+Run the test suite:
+
+```bash
+go test -v ./tests
+```
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 [Rahul Singh Maraskole](https://github.com/Noooblien)

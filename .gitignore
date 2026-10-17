@@ -1,0 +1,9 @@
+bin/
+dist/
+*.exe
+*.test
+*.out
+.timecapsule/
+capsules/
+*.db
+.DS_Store
