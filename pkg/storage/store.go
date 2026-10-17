@@ -127,6 +127,27 @@ func (s *Store) FindByWayback(targetURL, waybackTS string) (*archive.Snapshot, b
 	return matches[len(matches)-1], true
 }
 
+// GetHistory returns all historical snapshots for targetURL sorted chronologically.
+func (s *Store) GetHistory(targetURL string) []*archive.Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	targetNorm := normalizeURL(targetURL)
+	var matches []*archive.Snapshot
+
+	for _, snap := range s.index {
+		if normalizeURL(snap.URL) == targetNorm {
+			matches = append(matches, snap)
+		}
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Timestamp.Before(matches[j].Timestamp)
+	})
+
+	return matches
+}
+
 // List returns all stored snapshots sorted by timestamp descending.
 func (s *Store) List() []*archive.Snapshot {
 	s.mu.RLock()

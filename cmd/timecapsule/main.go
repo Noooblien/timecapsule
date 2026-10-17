@@ -5,16 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
+	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -71,6 +74,119 @@ func main() {
 		fmt.Printf("  Size:      %d bytes (%d assets)\n", snap.SizeBytes, snap.AssetCount)
 		fmt.Printf("  Hash:      %s\n", snap.ContentHash)
 		fmt.Printf("  Replay:    /web/%s/%s\n", snap.WaybackTS, snap.URL)
+
+	case "diff":
+		diffCmd := flag.NewFlagSet("diff", flag.ExitOnError)
+		dataDir := diffCmd.String("dir", defaultDataDir, "Storage directory")
+		_ = diffCmd.Parse(os.Args[2:])
+
+		args := diffCmd.Args()
+		if len(args) < 2 {
+			fmt.Println("Error: Two snapshot IDs required. Usage: timecapsule diff <old_id> <new_id>")
+			os.Exit(1)
+		}
+		oldID := args[0]
+		newID := args[1]
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			fmt.Printf("Storage error: %v\n", err)
+			os.Exit(1)
+		}
+
+		oldSnap, ok := store.Get(oldID)
+		if !ok {
+			fmt.Printf("Error: Snapshot '%s' not found\n", oldID)
+			os.Exit(1)
+		}
+		newSnap, ok := store.Get(newID)
+		if !ok {
+			fmt.Printf("Error: Snapshot '%s' not found\n", newID)
+			os.Exit(1)
+		}
+
+		res := diff.CompareSnapshots(oldSnap, newSnap)
+		fmt.Print(res.FormatANSI())
+
+	case "watch":
+		watchCmd := flag.NewFlagSet("watch", flag.ExitOnError)
+		dataDir := watchCmd.String("dir", defaultDataDir, "Storage directory")
+		interval := watchCmd.Duration("interval", 30*time.Second, "Check interval (e.g. 10s, 1m)")
+		timeout := watchCmd.Duration("timeout", 15*time.Second, "Fetch timeout")
+		_ = watchCmd.Parse(os.Args[2:])
+
+		args := watchCmd.Args()
+		if len(args) < 1 {
+			fmt.Println("Error: URL required. Usage: timecapsule watch <url> [--interval 30s]")
+			os.Exit(1)
+		}
+		targetURL := args[0]
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			fmt.Printf("Storage error: %v\n", err)
+			os.Exit(1)
+		}
+
+		archiver := archive.NewArchiver(*timeout)
+		fmt.Printf("👁️  Watching %s every %v for content changes (Ctrl+C to stop)...\n", targetURL, *interval)
+
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+		ticker := time.NewTicker(*interval)
+		defer ticker.Stop()
+
+		checkFunc := func() {
+			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+			defer cancel()
+
+			snap, err := archiver.Capture(ctx, targetURL)
+			if err != nil {
+				fmt.Printf("[%s] ⚠️ Check failed: %v\n", time.Now().Format("15:04:05"), err)
+				return
+			}
+
+			// Check latest snapshot for this URL
+			history := store.GetHistory(targetURL)
+			if len(history) == 0 {
+				_ = store.Save(snap)
+				fmt.Printf("[%s] 📥 Initial baseline capture stored (%s - %s)\n",
+					time.Now().Format("15:04:05"), snap.ID[:8], snap.Title)
+				return
+			}
+
+			latest := history[len(history)-1]
+			if latest.ContentHash == snap.ContentHash {
+				fmt.Printf("[%s] 💤 No changes detected (hash: %s)\n",
+					time.Now().Format("15:04:05"), snap.ContentHash[:8])
+				return
+			}
+
+			// Content changed!
+			if err := store.Save(snap); err != nil {
+				fmt.Printf("[%s] ❌ Failed to save new snapshot: %v\n", time.Now().Format("15:04:05"), err)
+				return
+			}
+
+			res := diff.CompareSnapshots(latest, snap)
+			fmt.Printf("\n🔔 [%s] Change detected! New snapshot: %s\n", time.Now().Format("15:04:05"), snap.ID)
+			fmt.Print(res.FormatANSI())
+			fmt.Println()
+		}
+
+		// Initial check immediately
+		checkFunc()
+
+		for {
+			select {
+			case <-sigChan:
+				fmt.Println("\nStopped watching.")
+				return
+			case <-ticker.C:
+				checkFunc()
+			}
+		}
 
 	case "list":
 		listCmd := flag.NewFlagSet("list", flag.ExitOnError)
@@ -199,6 +315,8 @@ Usage:
 
 Commands:
   save <url>        Capture and preserve a web page snapshot (HTML, WARC, Markdown)
+  diff <old> <new>  Compare two historical snapshots with visual line diff
+  watch <url>       Watch a webpage for updates and automatically preserve changes
   list              List all archived web page snapshots
   search <query>    Full-text search through preserved pages
   view <id>         Display the clean extracted markdown for a snapshot
@@ -207,6 +325,8 @@ Commands:
 
 Examples:
   timecapsule save https://news.ycombinator.com
+  timecapsule diff snap_123 snap_456
+  timecapsule watch https://github.com/trending --interval 1m
   timecapsule serve --port 8080
   timecapsule search "artificial intelligence"
 `, version)

@@ -6,7 +6,7 @@
 
 **Personal Wayback Machine & Self-Hosted Web Archival Engine in Go.**
 
-Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 28500 WARC files, offline reader Markdown, verbatim HTML snapshots, and provides an instant Wayback Machine web replay UI.
+Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 28500 WARC files, offline reader Markdown, verbatim HTML snapshots, provides an instant Wayback Machine web replay UI, and includes visual temporal diffing & continuous page watching.
 
 ---
 
@@ -16,8 +16,10 @@ Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 
 - 📦 **ISO 28500 WARC Standard**: Emits archival-grade WARC response records compatible with the Internet Archive, Wayback Machine, and WACZ tools.
 - 📄 **Clean Reader Markdown**: Automatically strips scripts, ads, and noise, outputting beautiful clean Markdown ready for offline reading and AI/LLM ingestion.
 - ⏳ **Wayback Time-Travel Replay**: Built-in HTTP replay server recreating the Wayback Machine URL structure (`/web/<timestamp>/<url>`) with retro archive banners.
+- ⇄ **Temporal Snapshot Diffing**: Compare two captures across time with LCS (Longest Common Subsequence) diffing, similarity metrics, and visual color highlights.
+- 👁️ **Automated Page Watcher**: Continuously monitor any web page for changes, auto-archiving new revisions and printing real-time diffs.
 - 🔍 **Full-Text Search**: Search through historical pages by title, URL, or article content.
-- 🖥️ **Modern Dark-Mode Dashboard**: Lightweight built-in web interface for preserving and exploring historical snapshots.
+- 🖥️ **Modern Dark-Mode Dashboard**: Lightweight built-in web interface for preserving, diffing, and exploring historical snapshots.
 
 ---
 
@@ -56,24 +58,46 @@ timecapsule save https://news.ycombinator.com
   Replay:    /web/20261018000400/https://news.ycombinator.com
 ```
 
-### 2. Launch the Wayback Replay Web Server
+### 2. Compare Historical Snapshots (Diff)
+```bash
+timecapsule diff tc_20261018000400_a3f19e8c tc_20261018004500_b9e28f11
+```
+```text
+--- tc_20261018000400_a3f19e8c (2026-10-18 00:04:00 UTC)
++++ tc_20261018004500_b9e28f11 (2026-10-18 00:45:00 UTC)
+Similarity: 94.2% (+5 / -3)
+
+  # Hacker News
+- 1. Project Alpha launches beta (120 points)
++ 1. Project Alpha launches beta (310 points)
++ 2. New AI model release (85 points)
+```
+
+### 3. Continuous Page Watcher
+Monitor any live URL for updates and automatically archive new versions as soon as changes occur:
+```bash
+timecapsule watch https://news.ycombinator.com --interval 1m
+```
+
+### 4. Launch the Wayback Replay Web Server
 ```bash
 timecapsule serve --port 8080
 ```
-Open `http://localhost:8080` in your browser to browse your personal archive or replay historical pages at:
-`http://localhost:8080/web/20261018000400/https://news.ycombinator.com`
+Open `http://localhost:8080` in your browser to browse your personal archive, replay historical pages, or visually inspect side-by-side diffs at:
+- Replay: `http://localhost:8080/web/<timestamp>/<url>`
+- Diff: `http://localhost:8080/diff/<old_id>/<new_id>`
 
-### 3. List Archived Snapshots
+### 5. List Archived Snapshots
 ```bash
 timecapsule list
 ```
 
-### 4. Search Historical Pages
+### 6. Search Historical Pages
 ```bash
 timecapsule search "artificial intelligence"
 ```
 
-### 5. View Reader Markdown in Terminal
+### 7. View Reader Markdown in Terminal
 ```bash
 timecapsule view tc_20261018000400_a3f19e8c
 ```
