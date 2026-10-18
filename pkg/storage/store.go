@@ -44,6 +44,13 @@ func NewStore(baseDir string) (*Store, error) {
 	return s, nil
 }
 
+// BaseDir returns the root storage directory path.
+func (s *Store) BaseDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.baseDir
+}
+
 // Save stores the snapshot metadata, raw HTML, and WARC file atomically.
 func (s *Store) Save(snap *archive.Snapshot) error {
 	s.mu.Lock()

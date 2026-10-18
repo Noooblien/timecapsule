@@ -15,6 +15,7 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/reader"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/warc"
+	"github.com/Noooblien/timecapsule/pkg/watcher"
 )
 
 // Server provides the Wayback Machine HTTP interface and API.
@@ -37,6 +38,7 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/api/snapshots", s.handleAPISnapshots)
 	s.mux.HandleFunc("/api/capture", s.handleAPICapture)
 	s.mux.HandleFunc("/api/diff", s.handleAPIDiff)
+	s.mux.HandleFunc("/api/watchers", s.handleAPIWatchers)
 	s.mux.HandleFunc("/cdx", s.handleCDX)
 	s.mux.HandleFunc("/api/cdx", s.handleCDX)
 	s.mux.HandleFunc("/web/", s.handleWaybackReplay)
@@ -544,4 +546,18 @@ async function captureURL() {
 </script>
 </body>
 </html>`)
+}
+
+func (s *Server) handleAPIWatchers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	engine, err := watcher.NewEngine(s.store, s.archiver, s.store.BaseDir())
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+		return
+	}
+	resp := map[string]interface{}{
+		"targets": engine.ListTargets(),
+		"events":  engine.GetEvents(""),
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
