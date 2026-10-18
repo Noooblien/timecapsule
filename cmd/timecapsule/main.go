@@ -16,6 +16,7 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/bench"
 	"github.com/Noooblien/timecapsule/pkg/bundle"
 	"github.com/Noooblien/timecapsule/pkg/diff"
+	"github.com/Noooblien/timecapsule/pkg/reader"
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/warc"
@@ -275,6 +276,75 @@ func main() {
 		}
 
 		fmt.Println(snap.Markdown)
+
+	case "reader":
+		readerCmd := flag.NewFlagSet("reader", flag.ExitOnError)
+		dataDir := readerCmd.String("dir", defaultDataDir, "Storage directory")
+		outFile := readerCmd.String("out", "", "Output Markdown file path (prints to stdout if omitted)")
+		frontmatter := readerCmd.Bool("frontmatter", false, "Include YAML frontmatter (title, author, date, word_count)")
+		htmlOut := readerCmd.Bool("html", false, "Output standalone distraction-free Reader View HTML instead of Markdown")
+		timeout := readerCmd.Duration("timeout", 15*time.Second, "Fetch timeout if target is a live URL")
+		_ = readerCmd.Parse(os.Args[2:])
+
+		args := readerCmd.Args()
+		if len(args) < 1 {
+			fmt.Println("Error: Snapshot ID or URL required. Usage: timecapsule reader <id|url> [--out <file.md>] [--frontmatter] [--html]")
+			os.Exit(1)
+		}
+		target := args[0]
+		store, _ := storage.NewStore(*dataDir)
+		var targetURL, rawHTML, title string
+
+		if store != nil {
+			if snap, ok := store.Get(target); ok {
+				targetURL = snap.URL
+				rawHTML = snap.HTML
+				title = snap.Title
+			}
+		}
+
+		if rawHTML == "" {
+			targetURL = target
+			if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+				targetURL = "https://" + targetURL
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+			defer cancel()
+			archiver := archive.NewArchiver(*timeout)
+			snap, err := archiver.Capture(ctx, targetURL)
+			if err != nil {
+				fmt.Printf("❌ Failed to fetch URL %s: %v\n", targetURL, err)
+				os.Exit(1)
+			}
+			rawHTML = snap.HTML
+			title = snap.Title
+		}
+
+		opts := reader.DefaultOptions(targetURL)
+		opts.IncludeFrontmatter = *frontmatter
+		article := reader.ExtractArticle(rawHTML, opts)
+		if article.Title == "Untitled Document" && title != "" {
+			article.Title = title
+		}
+
+		var output string
+		if *htmlOut {
+			output = reader.RenderReaderHTML(article)
+		} else if *frontmatter {
+			output = article.ToMarkdownWithFrontmatter()
+		} else {
+			output = article.Content
+		}
+
+		if *outFile != "" {
+			if err := os.WriteFile(*outFile, []byte(output), 0644); err != nil {
+				fmt.Printf("❌ Failed to write file: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("✅ Reader content written to %s (%d words, ~%d min read)\n", *outFile, article.WordCount, article.ReadingTimeMin)
+		} else {
+			fmt.Println(output)
+		}
 
 	case "bundle":
 		bundleCmd := flag.NewFlagSet("bundle", flag.ExitOnError)
@@ -632,6 +702,7 @@ Usage:
 
 Commands:
   save <url>        Capture and preserve a web page snapshot (HTML, WARC, Markdown)
+  reader <target>   Convert webpage/snapshot into clean reader Markdown or standalone HTML
   bundle <target>   Serialize verbatim DOM into a self-contained single-file HTML bundle
   verify <id|file>  Verify archival fidelity, ISO 28500 WARC compliance, and leak isolation
   bench             Run empirical archival fidelity and compression benchmark suite
@@ -648,6 +719,7 @@ Commands:
 
 Examples:
   timecapsule save https://news.ycombinator.com
+  timecapsule reader https://news.ycombinator.com --frontmatter
   timecapsule bundle https://news.ycombinator.com --out hn.single.html
   timecapsule export tc_123 --out archive.warc.gz --gzip
   timecapsule import external_archive.warc.gz

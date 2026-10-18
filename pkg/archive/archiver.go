@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Noooblien/timecapsule/pkg/reader"
 )
 
 var (
@@ -110,57 +112,13 @@ func ExtractTitle(html, fallback string) string {
 	return fallback
 }
 
-// ExtractMarkdown converts core textual elements (headings, paragraphs) to clean markdown.
+// ExtractMarkdown converts core textual elements to clean structured markdown using pkg/reader.
 func ExtractMarkdown(html, title string) string {
-	cleaned := scriptRegex.ReplaceAllString(html, "")
-	cleaned = styleRegex.ReplaceAllString(cleaned, "")
-
-	var sb strings.Builder
-	sb.WriteString("# " + title + "\n\n")
-
-	// Extract H1s
-	h1Matches := h1Regex.FindAllStringSubmatch(cleaned, -1)
-	for _, m := range h1Matches {
-		if len(m) > 1 {
-			txt := strings.TrimSpace(tagRegex.ReplaceAllString(m[1], ""))
-			if txt != "" && txt != title {
-				sb.WriteString("## " + txt + "\n\n")
-			}
-		}
+	res := reader.Convert(html, title, "")
+	if !strings.HasPrefix(strings.TrimSpace(res), "# ") && title != "" {
+		res = "# " + title + "\n\n" + res
 	}
-
-	// Extract H2s
-	h2Matches := h2Regex.FindAllStringSubmatch(cleaned, -1)
-	for _, m := range h2Matches {
-		if len(m) > 1 {
-			txt := strings.TrimSpace(tagRegex.ReplaceAllString(m[1], ""))
-			if txt != "" {
-				sb.WriteString("### " + txt + "\n\n")
-			}
-		}
-	}
-
-	// Extract paragraphs
-	pMatches := pRegex.FindAllStringSubmatch(cleaned, -1)
-	for _, m := range pMatches {
-		if len(m) > 1 {
-			txt := strings.TrimSpace(tagRegex.ReplaceAllString(m[1], ""))
-			txt = wsRegex.ReplaceAllString(txt, " ")
-			if len(txt) > 20 {
-				sb.WriteString(txt + "\n\n")
-			}
-		}
-	}
-
-	result := sb.String()
-	if strings.TrimSpace(result) == "# "+title {
-		// Fallback: strip all tags
-		raw := tagRegex.ReplaceAllString(cleaned, " ")
-		raw = wsRegex.ReplaceAllString(raw, " ")
-		return "# " + title + "\n\n" + strings.TrimSpace(raw)
-	}
-
-	return result
+	return res
 }
 
 // ExtractAssets finds referenced image, css, and js asset paths.
