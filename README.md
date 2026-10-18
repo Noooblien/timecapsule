@@ -18,6 +18,7 @@ Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 
 - 🔄 **WARC Import & Export**: Import external `.warc` and `.warc.gz` dumps directly into your Wayback archive or export snapshots with cryptographic digest integrity.
 - 📑 **Standard CDXJ 1.1 Indexing & SURT**: Generates universal Capture Index Format (CDXJ) records with Sort-friendly URI Technique (SURT) keys compatible with OutbackCDX and pywb.
 - 🌐 **Wayback CDX Server API**: Built-in `/cdx` and `/api/cdx` query endpoints supporting JSON and CDXJ outputs for Wayback Machine browser extensions and tools.
+- 📖 **Offline Reader & Markdown Engine**: Noise-free readability parser stripping navigation, sidebars, ads, and footers; extracts author, publication date, and description metadata; generates structured Markdown with tables, code fences, blockquotes, and YAML frontmatter; generates distraction-free responsive Reader View HTML.
 - 📄 **Clean Reader Markdown**: Automatically strips scripts, ads, and noise, outputting beautiful clean Markdown ready for offline reading and AI/LLM ingestion.
 - ⏳ **Wayback Time-Travel Replay**: Built-in HTTP replay server recreating the Wayback Machine URL structure (`/web/<timestamp>/<url>`) with retro archive banners.
 - ⇄ **Temporal Snapshot Diffing**: Compare two captures across time with LCS (Longest Common Subsequence) diffing, similarity metrics, and visual color highlights.
@@ -83,7 +84,20 @@ Monitor any live URL for updates and automatically archive new versions as soon 
 timecapsule watch https://news.ycombinator.com --interval 1m
 ```
 
-### 4. Create Hermetic Single-File DOM Bundle
+### 4. Distraction-Free Offline Reader & Markdown Conversion
+Convert any live URL or existing snapshot into clean Markdown with metadata frontmatter or standalone distraction-free Reader View HTML:
+```bash
+# Convert live URL to clean Markdown with YAML frontmatter
+timecapsule reader https://news.ycombinator.com --frontmatter
+
+# Convert snapshot to a Markdown file
+timecapsule reader tc_20261018000400_a3f19e8c --out article.md --frontmatter
+
+# Output standalone distraction-free Reader View HTML
+timecapsule reader https://blog.example.com/post --html --out reader.html
+```
+
+### 5. Create Hermetic Single-File DOM Bundle
 Inline all remote assets (stylesheets, nested CSS fonts/images, images) and neutralize active scripts into a self-contained, offline-viewable HTML file:
 ```bash
 # Bundle directly from a live URL
@@ -93,25 +107,25 @@ timecapsule bundle https://news.ycombinator.com --out hn.single.html
 timecapsule bundle tc_20261018000400_a3f19e8c --out snapshot.single.html
 ```
 
-### 5. Export ISO 28500 WARC Archive
+### 6. Export ISO 28500 WARC Archive
 Export any snapshot into standard ISO 28500 multi-record WARC file (with optional Annex D GZIP compression):
 ```bash
 timecapsule export tc_20261018000400_a3f19e8c --out my_archive.warc.gz --gzip
 ```
 
-### 6. Import External WARC Dumps
+### 7. Import External WARC Dumps
 Import existing WARC archives from the Internet Archive, Common Crawl, or wget crawls directly into TimeCapsule:
 ```bash
 timecapsule import external_crawl.warc.gz
 ```
 
-### 7. Generate Standard CDXJ Index
+### 8. Generate Standard CDXJ Index
 Output standard CDXJ 1.1 capture index entries with SURT keys:
 ```bash
 timecapsule cdx https://news.ycombinator.com
 ```
 
-### 8. Run Archival Fidelity & ISO 28500 Benchmark
+### 9. Run Archival Fidelity & ISO 28500 Benchmark
 Empirically assert hermetic isolation, asset preservation ratio, ISO 28500 WARC standard compliance, and compression efficiency across test corpuses:
 ```bash
 # Run 4-corpus empirical benchmark suite
@@ -121,7 +135,7 @@ timecapsule bench --demo
 timecapsule bench --demo --markdown
 ```
 
-### 9. Verify Archival Isolation & Privacy Leak Audit
+### 10. Verify Archival Isolation & Privacy Leak Audit
 Audit any snapshot, WARC file, or standalone HTML file for un-neutralized active scripts, remote network leaks, or corrupt WARC headers:
 ```bash
 # Verify a captured snapshot
@@ -134,26 +148,27 @@ timecapsule verify crawl.warc.gz
 timecapsule verify page.single.html
 ```
 
-### 10. Launch the Wayback Replay Web Server
+### 11. Launch the Wayback Replay Web Server
 ```bash
 timecapsule serve --port 8080
 ```
 Open `http://localhost:8080` in your browser to browse your personal archive, replay historical pages, or visually inspect side-by-side diffs at:
 - Replay: `http://localhost:8080/web/<timestamp>/<url>`
+- Reader View: `http://localhost:8080/reader/<id>`
 - Diff: `http://localhost:8080/diff/<old_id>/<new_id>`
 - CDX API: `http://localhost:8080/cdx?url=https://news.ycombinator.com&output=json`
 
-### 11. List Archived Snapshots
+### 12. List Archived Snapshots
 ```bash
 timecapsule list
 ```
 
-### 12. Search Historical Pages
+### 13. Search Historical Pages
 ```bash
 timecapsule search "artificial intelligence"
 ```
 
-### 13. View Reader Markdown in Terminal
+### 14. View Reader Markdown in Terminal
 ```bash
 timecapsule view tc_20261018000400_a3f19e8c
 ```

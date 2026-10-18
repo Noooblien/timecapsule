@@ -12,6 +12,7 @@ import (
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
 	"github.com/Noooblien/timecapsule/pkg/diff"
+	"github.com/Noooblien/timecapsule/pkg/reader"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/warc"
 )
@@ -42,6 +43,7 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/diff/", s.handleDiff)
 	s.mux.HandleFunc("/raw/", s.handleRaw)
 	s.mux.HandleFunc("/markdown/", s.handleMarkdown)
+	s.mux.HandleFunc("/reader/", s.handleReader)
 	s.mux.HandleFunc("/warc/", s.handleWARC)
 
 	return s
@@ -299,6 +301,24 @@ func (s *Server) handleMarkdown(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(snap.Markdown))
 }
 
+func (s *Server) handleReader(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/reader/")
+	snap, ok := s.store.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	opts := reader.DefaultOptions(snap.URL)
+	article := reader.Extract(snap.HTML, opts)
+	if article.Title == "Untitled Document" && snap.Title != "" {
+		article.Title = snap.Title
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(reader.RenderReaderHTML(article)))
+}
+
 func (s *Server) handleCDX(w http.ResponseWriter, r *http.Request) {
 	targetURL := r.URL.Query().Get("url")
 	outputFormat := strings.ToLower(r.URL.Query().Get("output"))
@@ -481,6 +501,7 @@ button:hover { opacity: 0.9; }
       <div class="card-actions">
         <a href="/web/%s/%s" target="_blank">Replay in Wayback ⏳</a>
         %s
+        <a href="/reader/%s" target="_blank">Reader Mode 📖</a>
         <a href="/raw/%s" target="_blank">Raw HTML</a>
         <a href="/markdown/%s" target="_blank">Markdown View 📄</a>
         <a href="/warc/%s">Download WARC 📦</a>
@@ -491,7 +512,7 @@ button:hover { opacity: 0.9; }
 				html.EscapeString(snap.URL), snap.SizeBytes, snap.AssetCount,
 				snap.WaybackTS, snap.URL,
 				diffBtn,
-				snap.ID, snap.ID, snap.ID)
+				snap.ID, snap.ID, snap.ID, snap.ID)
 		}
 	}
 
