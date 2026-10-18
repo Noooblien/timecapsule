@@ -20,9 +20,10 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/warc"
+	"github.com/Noooblien/timecapsule/pkg/watcher"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -116,16 +117,29 @@ func main() {
 	case "watch":
 		watchCmd := flag.NewFlagSet("watch", flag.ExitOnError)
 		dataDir := watchCmd.String("dir", defaultDataDir, "Storage directory")
-		interval := watchCmd.Duration("interval", 30*time.Second, "Check interval (e.g. 10s, 1m)")
+		demo := watchCmd.Bool("demo", false, "Run multi-scenario continuous watcher simulation demo")
+		mermaid := watchCmd.Bool("mermaid", false, "Render Mermaid timeline of detected drift events")
+		markdown := watchCmd.Bool("markdown", false, "Render Markdown summary report")
+		addURL := watchCmd.String("add", "", "Register a URL for continuous temporal monitoring")
+		name := watchCmd.String("name", "", "Human-readable label for the watch target")
+		webhook := watchCmd.String("webhook", "", "Optional webhook URL for drift notifications")
+		threshold := watchCmd.Float64("threshold", 0.05, "Drift sensitivity threshold (default 0.05 = 5%)")
+		ignore := watchCmd.String("ignore", "", "Comma-separated CSS classes/IDs to ignore (e.g. ad-banner,timestamp)")
+		list := watchCmd.Bool("list", false, "Display status scorecard of all registered watch targets")
+		poll := watchCmd.Bool("poll", false, "Execute on-demand check cycle across all targets")
+		interval := watchCmd.Duration("interval", 5*time.Minute, "Check interval (e.g. 30s, 5m, 1h)")
 		timeout := watchCmd.Duration("timeout", 15*time.Second, "Fetch timeout")
 		_ = watchCmd.Parse(os.Args[2:])
 
-		args := watchCmd.Args()
-		if len(args) < 1 {
-			fmt.Println("Error: URL required. Usage: timecapsule watch <url> [--interval 30s]")
-			os.Exit(1)
+		if *demo {
+			out, err := watcher.RunWatcherDemo(*mermaid, *markdown)
+			if err != nil {
+				fmt.Printf("Demo failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println(out)
+			return
 		}
-		targetURL := args[0]
 
 		store, err := storage.NewStore(*dataDir)
 		if err != nil {
@@ -134,8 +148,81 @@ func main() {
 		}
 
 		archiver := archive.NewArchiver(*timeout)
-		fmt.Printf("👁️  Watching %s every %v for content changes (Ctrl+C to stop)...\n", targetURL, *interval)
+		engine, err := watcher.NewEngine(store, archiver, *dataDir)
+		if err != nil {
+			fmt.Printf("Watcher engine error: %v\n", err)
+			os.Exit(1)
+		}
 
+		if *addURL != "" {
+			var ignoreSelectors []string
+			if *ignore != "" {
+				for _, s := range strings.Split(*ignore, ",") {
+					if tr := strings.TrimSpace(s); tr != "" {
+						ignoreSelectors = append(ignoreSelectors, tr)
+					}
+				}
+			}
+			t, err := engine.AddTarget(*addURL, *name, (*interval).String(), *webhook, *threshold, ignoreSelectors, nil)
+			if err != nil {
+				fmt.Printf("Failed to add target: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("✨ Watch target registered successfully:\n")
+			fmt.Printf("   ID:       %s\n", t.ID)
+			fmt.Printf("   Name:     %s\n", t.Name)
+			fmt.Printf("   URL:      %s\n", t.URL)
+			fmt.Printf("   Interval: %s\n", t.IntervalStr)
+			if t.WebhookURL != "" {
+				fmt.Printf("   Webhook:  %s\n", t.WebhookURL)
+			}
+			return
+		}
+
+		if *list {
+			targets := engine.ListTargets()
+			events := engine.GetEvents("")
+			if *markdown {
+				fmt.Println(watcher.RenderMarkdownReport(targets, events))
+			} else if *mermaid {
+				fmt.Println(watcher.RenderMermaidTimeline(events))
+			} else {
+				fmt.Print(watcher.RenderWatcherScorecard(targets, events))
+			}
+			return
+		}
+
+		if *poll {
+			fmt.Println("🔍 Executing on-demand polling cycle across active targets...")
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			events := engine.PollAll(ctx)
+			targets := engine.ListTargets()
+			fmt.Printf("✅ Polling completed: %d targets checked, %d mutations detected.\n", len(targets), len(events))
+			fmt.Print(watcher.RenderWatcherScorecard(targets, engine.GetEvents("")))
+			return
+		}
+
+		// Positional argument fallback: single URL live watching
+		args := watchCmd.Args()
+		if len(args) < 1 {
+			targets := engine.ListTargets()
+			if len(targets) > 0 {
+				fmt.Print(watcher.RenderWatcherScorecard(targets, engine.GetEvents("")))
+				return
+			}
+			fmt.Println("Usage: timecapsule watch <url> [--interval 30s] | --demo | --list | --add <url>")
+			os.Exit(1)
+		}
+
+		targetURL := args[0]
+		target, err := engine.AddTarget(targetURL, targetURL, (*interval).String(), *webhook, *threshold, nil, nil)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("👁️  Watching %s every %v for content changes (Ctrl+C to stop)...\n", targetURL, *interval)
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
@@ -146,38 +233,19 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 			defer cancel()
 
-			snap, err := archiver.Capture(ctx, targetURL)
+			ev, err := engine.PollTarget(ctx, target.ID)
 			if err != nil {
-				fmt.Printf("[%s] ⚠️ Check failed: %v\n", time.Now().Format("15:04:05"), err)
+				fmt.Printf("[%s] ⚠️  Check failed: %v\n", time.Now().Format("15:04:05"), err)
 				return
 			}
-
-			// Check latest snapshot for this URL
-			history := store.GetHistory(targetURL)
-			if len(history) == 0 {
-				_ = store.Save(snap)
-				fmt.Printf("[%s] 📥 Initial baseline capture stored (%s - %s)\n",
-					time.Now().Format("15:04:05"), snap.ID[:8], snap.Title)
-				return
+			if ev == nil {
+				fmt.Printf("[%s] 💤 No drift detected (hash: %s)\n", time.Now().Format("15:04:05"), target.LastHash[:8])
+			} else {
+				fmt.Printf("\n🔔 [%s] %s Drift detected! (%s, delta: %.1f%%)\n",
+					time.Now().Format("15:04:05"), ev.Severity, ev.Summary, ev.DeltaRatio*100)
+				fmt.Printf("   Old Snapshot: %s | New Snapshot: %s (+%d / -%d lines)\n\n",
+					ev.OldSnapshotID[:8], ev.NewSnapshotID[:8], ev.LinesAdded, ev.LinesDeleted)
 			}
-
-			latest := history[len(history)-1]
-			if latest.ContentHash == snap.ContentHash {
-				fmt.Printf("[%s] 💤 No changes detected (hash: %s)\n",
-					time.Now().Format("15:04:05"), snap.ContentHash[:8])
-				return
-			}
-
-			// Content changed!
-			if err := store.Save(snap); err != nil {
-				fmt.Printf("[%s] ❌ Failed to save new snapshot: %v\n", time.Now().Format("15:04:05"), err)
-				return
-			}
-
-			res := diff.CompareSnapshots(latest, snap)
-			fmt.Printf("\n🔔 [%s] Change detected! New snapshot: %s\n", time.Now().Format("15:04:05"), snap.ID)
-			fmt.Print(res.FormatANSI())
-			fmt.Println()
 		}
 
 		// Initial check immediately
@@ -707,7 +775,7 @@ Commands:
   verify <id|file>  Verify archival fidelity, ISO 28500 WARC compliance, and leak isolation
   bench             Run empirical archival fidelity and compression benchmark suite
   diff <old> <new>  Compare two historical snapshots with visual line diff
-  watch <url>       Watch a webpage for updates and automatically preserve changes
+  watch [options]   Continuous website drift watcher, change alerts & automated snapshots
   export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
   import <file>     Import an external ISO 28500 WARC archive into TimeCapsule
   cdx [url]         Generate standard CDXJ 1.1 capture index
@@ -721,6 +789,9 @@ Examples:
   timecapsule save https://news.ycombinator.com
   timecapsule reader https://news.ycombinator.com --frontmatter
   timecapsule bundle https://news.ycombinator.com --out hn.single.html
+  timecapsule watch --demo
+  timecapsule watch --add https://github.com/trending --interval 10m
+  timecapsule watch --list
   timecapsule export tc_123 --out archive.warc.gz --gzip
   timecapsule import external_archive.warc.gz
   timecapsule cdx https://news.ycombinator.com

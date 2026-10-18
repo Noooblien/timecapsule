@@ -78,10 +78,23 @@ Similarity: 94.2% (+5 / -3)
 + 2. New AI model release (85 points)
 ```
 
-### 3. Continuous Page Watcher
-Monitor any live URL for updates and automatically archive new versions as soon as changes occur:
+### 3. Continuous Page Watcher & Website Drift Monitor
+Monitor any live URL or registry of web pages for updates with automated drift classification, noise filtering, webhook alerts, and auto-archival:
 ```bash
-timecapsule watch https://news.ycombinator.com --interval 1m
+# Run multi-target simulated drift & mutation benchmark demo
+timecapsule watch --demo
+
+# Register target for continuous monitoring with noise filtering and webhook dispatch
+timecapsule watch --add https://news.ycombinator.com --name "Hacker News" --interval 5m --ignore "ad-banner,timestamp" --webhook "https://alerts.example.com/drift"
+
+# Display status scorecard of all registered watch targets and recent drift events
+timecapsule watch --list
+
+# Execute on-demand polling cycle across all active targets
+timecapsule watch --poll
+
+# Generate Mermaid timeline of detected website mutations
+timecapsule watch --demo --mermaid
 ```
 
 ### 4. Distraction-Free Offline Reader & Markdown Conversion
