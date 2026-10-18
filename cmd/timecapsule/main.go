@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -15,9 +16,10 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
+	"github.com/Noooblien/timecapsule/pkg/warc"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -272,6 +274,151 @@ func main() {
 
 		fmt.Println(snap.Markdown)
 
+	case "export":
+		exportCmd := flag.NewFlagSet("export", flag.ExitOnError)
+		dataDir := exportCmd.String("dir", defaultDataDir, "Storage directory")
+		outFile := exportCmd.String("out", "", "Output file path (default: <id>.warc or <id>.warc.gz)")
+		useGzip := exportCmd.Bool("gzip", false, "Compress output with GZIP (ISO 28500 Annex D)")
+		_ = exportCmd.Parse(os.Args[2:])
+
+		args := exportCmd.Args()
+		if len(args) < 1 {
+			fmt.Println("Error: Snapshot ID required. Usage: timecapsule export <id> [--out <file>] [--gzip]")
+			os.Exit(1)
+		}
+		id := args[0]
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			fmt.Printf("Storage error: %v\n", err)
+			os.Exit(1)
+		}
+
+		snap, ok := store.Get(id)
+		if !ok {
+			fmt.Printf("Error: Snapshot '%s' not found\n", id)
+			os.Exit(1)
+		}
+
+		targetFile := *outFile
+		isGz := *useGzip
+		if targetFile == "" {
+			targetFile = snap.ID + ".warc"
+			if isGz {
+				targetFile += ".gz"
+			}
+		} else if strings.HasSuffix(targetFile, ".gz") {
+			isGz = true
+		}
+
+		f, err := os.Create(targetFile)
+		if err != nil {
+			fmt.Printf("Error creating output file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+
+		writer := warc.NewWriter(f, isGz)
+		cdxEntries, err := writer.WriteSnapshotArchive(snap, filepath.Base(targetFile))
+		if err != nil {
+			fmt.Printf("Error exporting WARC: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("✅ Exported ISO 28500 WARC to %s (%d bytes, %d CDX records)\n", targetFile, writer.CurrentOffset(), len(cdxEntries))
+		if len(cdxEntries) > 0 {
+			fmt.Printf("  CDXJ: %s", warc.FormatCDXJ(cdxEntries[0]))
+		}
+
+	case "import":
+		importCmd := flag.NewFlagSet("import", flag.ExitOnError)
+		dataDir := importCmd.String("dir", defaultDataDir, "Storage directory")
+		_ = importCmd.Parse(os.Args[2:])
+
+		args := importCmd.Args()
+		if len(args) < 1 {
+			fmt.Println("Error: WARC file required. Usage: timecapsule import <file.warc[.gz]>")
+			os.Exit(1)
+		}
+		warcPath := args[0]
+
+		f, err := os.Open(warcPath)
+		if err != nil {
+			fmt.Printf("Error opening WARC file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+
+		reader, err := warc.NewReader(f)
+		if err != nil {
+			fmt.Printf("Error initializing WARC reader: %v\n", err)
+			os.Exit(1)
+		}
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			fmt.Printf("Storage error: %v\n", err)
+			os.Exit(1)
+		}
+
+		imported := 0
+		for {
+			rec, err := reader.NextRecord()
+			if err != nil {
+				break
+			}
+			if rec.Type == warc.RecordTypeResponse {
+				snap, err := warc.ImportToSnapshot(rec)
+				if err != nil {
+					continue
+				}
+				if err := store.Save(snap); err == nil {
+					imported++
+					fmt.Printf("  • Imported %s -> %s (%s)\n", snap.URL, snap.ID, snap.Title)
+				}
+			}
+		}
+		fmt.Printf("✅ Successfully imported %d snapshots from %s\n", imported, filepath.Base(warcPath))
+
+	case "cdx":
+		cdxCmd := flag.NewFlagSet("cdx", flag.ExitOnError)
+		dataDir := cdxCmd.String("dir", defaultDataDir, "Storage directory")
+		_ = cdxCmd.Parse(os.Args[2:])
+
+		args := cdxCmd.Args()
+		targetURL := ""
+		if len(args) > 0 {
+			targetURL = args[0]
+		}
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			fmt.Printf("Storage error: %v\n", err)
+			os.Exit(1)
+		}
+
+		var snapshots []*archive.Snapshot
+		if targetURL != "" {
+			snapshots = store.GetHistory(targetURL)
+		} else {
+			snapshots = store.List()
+		}
+
+		for _, snap := range snapshots {
+			entry := warc.CDXJEntry{
+				SURT:        warc.ToSURT(snap.URL),
+				Timestamp:   snap.WaybackTS,
+				OriginalURL: snap.URL,
+				MimeType:    snap.ContentType,
+				StatusCode:  snap.StatusCode,
+				Digest:      snap.ContentHash,
+				Length:      snap.SizeBytes,
+				Offset:      0,
+				Filename:    fmt.Sprintf("%s.warc", snap.ID),
+			}
+			fmt.Print(warc.FormatCDXJ(entry))
+		}
+
 	case "serve":
 		serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
 		port := serveCmd.Int("port", 8080, "Port to listen on")
@@ -317,6 +464,9 @@ Commands:
   save <url>        Capture and preserve a web page snapshot (HTML, WARC, Markdown)
   diff <old> <new>  Compare two historical snapshots with visual line diff
   watch <url>       Watch a webpage for updates and automatically preserve changes
+  export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
+  import <file>     Import an external ISO 28500 WARC archive into TimeCapsule
+  cdx [url]         Generate standard CDXJ 1.1 capture index
   list              List all archived web page snapshots
   search <query>    Full-text search through preserved pages
   view <id>         Display the clean extracted markdown for a snapshot
@@ -325,6 +475,9 @@ Commands:
 
 Examples:
   timecapsule save https://news.ycombinator.com
+  timecapsule export tc_123 --out archive.warc.gz --gzip
+  timecapsule import external_archive.warc.gz
+  timecapsule cdx https://news.ycombinator.com
   timecapsule diff snap_123 snap_456
   timecapsule watch https://github.com/trending --interval 1m
   timecapsule serve --port 8080

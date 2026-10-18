@@ -13,7 +13,10 @@ Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 
 ## Features
 
 - ⚡ **Zero Dependencies**: Pure Go standard library. No Python virtualenvs, no headless Chrome bloat, no heavy databases.
-- 📦 **ISO 28500 WARC Standard**: Emits archival-grade WARC response records compatible with the Internet Archive, Wayback Machine, and WACZ tools.
+- 📦 **ISO 28500 WARC Standard**: Emits archival-grade multi-record WARC suites (`warcinfo`, `request`, `response`, `metadata`) with ISO 28500 Annex D GZIP concatenation.
+- 🔄 **WARC Import & Export**: Import external `.warc` and `.warc.gz` dumps directly into your Wayback archive or export snapshots with cryptographic digest integrity.
+- 📑 **Standard CDXJ 1.1 Indexing & SURT**: Generates universal Capture Index Format (CDXJ) records with Sort-friendly URI Technique (SURT) keys compatible with OutbackCDX and pywb.
+- 🌐 **Wayback CDX Server API**: Built-in `/cdx` and `/api/cdx` query endpoints supporting JSON and CDXJ outputs for Wayback Machine browser extensions and tools.
 - 📄 **Clean Reader Markdown**: Automatically strips scripts, ads, and noise, outputting beautiful clean Markdown ready for offline reading and AI/LLM ingestion.
 - ⏳ **Wayback Time-Travel Replay**: Built-in HTTP replay server recreating the Wayback Machine URL structure (`/web/<timestamp>/<url>`) with retro archive banners.
 - ⇄ **Temporal Snapshot Diffing**: Compare two captures across time with LCS (Longest Common Subsequence) diffing, similarity metrics, and visual color highlights.
@@ -79,25 +82,44 @@ Monitor any live URL for updates and automatically archive new versions as soon 
 timecapsule watch https://news.ycombinator.com --interval 1m
 ```
 
-### 4. Launch the Wayback Replay Web Server
+### 4. Export ISO 28500 WARC Archive
+Export any snapshot into standard ISO 28500 multi-record WARC file (with optional Annex D GZIP compression):
+```bash
+timecapsule export tc_20261018000400_a3f19e8c --out my_archive.warc.gz --gzip
+```
+
+### 5. Import External WARC Dumps
+Import existing WARC archives from the Internet Archive, Common Crawl, or wget crawls directly into TimeCapsule:
+```bash
+timecapsule import external_crawl.warc.gz
+```
+
+### 6. Generate Standard CDXJ Index
+Output standard CDXJ 1.1 capture index entries with SURT keys:
+```bash
+timecapsule cdx https://news.ycombinator.com
+```
+
+### 7. Launch the Wayback Replay Web Server
 ```bash
 timecapsule serve --port 8080
 ```
 Open `http://localhost:8080` in your browser to browse your personal archive, replay historical pages, or visually inspect side-by-side diffs at:
 - Replay: `http://localhost:8080/web/<timestamp>/<url>`
 - Diff: `http://localhost:8080/diff/<old_id>/<new_id>`
+- CDX API: `http://localhost:8080/cdx?url=https://news.ycombinator.com&output=json`
 
-### 5. List Archived Snapshots
+### 8. List Archived Snapshots
 ```bash
 timecapsule list
 ```
 
-### 6. Search Historical Pages
+### 9. Search Historical Pages
 ```bash
 timecapsule search "artificial intelligence"
 ```
 
-### 7. View Reader Markdown in Terminal
+### 10. View Reader Markdown in Terminal
 ```bash
 timecapsule view tc_20261018000400_a3f19e8c
 ```
