@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/storage"
+	"github.com/Noooblien/timecapsule/pkg/warc"
 )
 
 // Server provides the Wayback Machine HTTP interface and API.
@@ -34,6 +36,8 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/api/snapshots", s.handleAPISnapshots)
 	s.mux.HandleFunc("/api/capture", s.handleAPICapture)
 	s.mux.HandleFunc("/api/diff", s.handleAPIDiff)
+	s.mux.HandleFunc("/cdx", s.handleCDX)
+	s.mux.HandleFunc("/api/cdx", s.handleCDX)
 	s.mux.HandleFunc("/web/", s.handleWaybackReplay)
 	s.mux.HandleFunc("/diff/", s.handleDiff)
 	s.mux.HandleFunc("/raw/", s.handleRaw)
@@ -295,18 +299,93 @@ func (s *Server) handleMarkdown(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(snap.Markdown))
 }
 
+func (s *Server) handleCDX(w http.ResponseWriter, r *http.Request) {
+	targetURL := r.URL.Query().Get("url")
+	outputFormat := strings.ToLower(r.URL.Query().Get("output"))
+	if outputFormat == "" {
+		outputFormat = "json"
+	}
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if val, err := strconv.Atoi(l); err == nil && val > 0 {
+			limit = val
+		}
+	}
+
+	var snapshots []*archive.Snapshot
+	if targetURL != "" {
+		snapshots = s.store.GetHistory(targetURL)
+	} else {
+		snapshots = s.store.List()
+	}
+
+	if len(snapshots) > limit {
+		snapshots = snapshots[:limit]
+	}
+
+	if outputFormat == "cdxj" || outputFormat == "text" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		for _, snap := range snapshots {
+			entry := warc.CDXJEntry{
+				SURT:        warc.ToSURT(snap.URL),
+				Timestamp:   snap.WaybackTS,
+				OriginalURL: snap.URL,
+				MimeType:    snap.ContentType,
+				StatusCode:  snap.StatusCode,
+				Digest:      snap.ContentHash,
+				Length:      snap.SizeBytes,
+				Offset:      0,
+				Filename:    fmt.Sprintf("%s.warc", snap.ID),
+			}
+			w.Write([]byte(warc.FormatCDXJ(entry)))
+		}
+		return
+	}
+
+	// JSON output compatible with Wayback CDX API
+	var entries []warc.CDXJEntry
+	for _, snap := range snapshots {
+		entries = append(entries, warc.CDXJEntry{
+			SURT:        warc.ToSURT(snap.URL),
+			Timestamp:   snap.WaybackTS,
+			OriginalURL: snap.URL,
+			MimeType:    snap.ContentType,
+			StatusCode:  snap.StatusCode,
+			Digest:      snap.ContentHash,
+			Length:      snap.SizeBytes,
+			Offset:      0,
+			Filename:    fmt.Sprintf("%s.warc", snap.ID),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(entries)
+}
+
 func (s *Server) handleWARC(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/warc/")
+	isGzip := strings.HasSuffix(id, ".gz") || r.URL.Query().Get("gzip") == "true"
+	id = strings.TrimSuffix(id, ".gz")
+	id = strings.TrimSuffix(id, ".warc")
+
 	snap, ok := s.store.Get(id)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 
-	warc := archive.GenerateWARC(snap)
-	w.Header().Set("Content-Type", "application/warc")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.warc", snap.ID))
-	_, _ = w.Write(warc)
+	filename := fmt.Sprintf("%s.warc", snap.ID)
+	if isGzip {
+		filename += ".gz"
+		w.Header().Set("Content-Type", "application/gzip")
+	} else {
+		w.Header().Set("Content-Type", "application/warc")
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	writer := warc.NewWriter(w, isGzip)
+	_, _ = writer.WriteSnapshotArchive(snap, filename)
 }
 
 func injectBanner(htmlContent, banner string) string {
