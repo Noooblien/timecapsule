@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
+	"github.com/Noooblien/timecapsule/pkg/bench"
 	"github.com/Noooblien/timecapsule/pkg/bundle"
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/server"
@@ -518,6 +519,100 @@ func main() {
 			fmt.Printf("Server exited: %v\n", err)
 		}
 
+	case "bench":
+		benchCmd := flag.NewFlagSet("bench", flag.ExitOnError)
+		demo := benchCmd.Bool("demo", false, "Run comprehensive 4-corpus archival benchmark suite")
+		strict := benchCmd.Bool("strict", false, "Exit with code 1 if benchmark suite fails")
+		markdown := benchCmd.Bool("markdown", false, "Output GitHub Markdown summary table")
+		jsonOutput := benchCmd.Bool("json", false, "Output structured JSON report")
+		_ = benchCmd.Parse(os.Args[2:])
+
+		if *demo || len(os.Args) == 2 {
+			suite := bench.GenerateDemoSuite()
+			if *markdown {
+				fmt.Println(bench.RenderMarkdown(suite))
+			} else if *jsonOutput {
+				js, _ := bench.RenderJSON(suite)
+				fmt.Println(js)
+			} else {
+				fmt.Print(bench.RenderSuiteScorecard(suite))
+			}
+			if *strict && !suite.OverallPassed {
+				os.Exit(1)
+			}
+			return
+		}
+
+	case "verify":
+		verifyCmd := flag.NewFlagSet("verify", flag.ExitOnError)
+		dataDir := verifyCmd.String("dir", defaultDataDir, "Storage directory")
+		strict := verifyCmd.Bool("strict", false, "Exit with code 1 if verification detects leaks or invalid ISO WARC")
+		_ = verifyCmd.Parse(os.Args[2:])
+
+		args := verifyCmd.Args()
+		if len(args) < 1 {
+			fmt.Println("Error: Target required. Usage: timecapsule verify <snapshot_id|file.warc|file.html> [--strict]")
+			os.Exit(1)
+		}
+		target := args[0]
+
+		engine := bench.NewEngine()
+		store, _ := storage.NewStore(*dataDir)
+
+		// 1. Try resolving as snapshot ID
+		if store != nil {
+			if snap, ok := store.Get(target); ok {
+				res, err := engine.EvaluateSnapshot(snap)
+				if err != nil {
+					fmt.Printf("Verification error: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Print(bench.RenderCorpusScorecard(res))
+				if *strict && !res.Passed {
+					os.Exit(1)
+				}
+				return
+			}
+		}
+
+		// 2. Try resolving as local file
+		fileBytes, err := os.ReadFile(target)
+		if err != nil {
+			fmt.Printf("Error reading target '%s': %v\n", target, err)
+			os.Exit(1)
+		}
+
+		if strings.HasSuffix(target, ".warc") || strings.HasSuffix(target, ".warc.gz") {
+			iso := bench.ValidateWARC(fileBytes)
+			fmt.Printf("\n=== ISO 28500 WARC Conformance Audit for %s ===\n", target)
+			fmt.Printf("Valid Format:      %v\n", iso.ValidFormat)
+			fmt.Printf("WARC Info Record:  %v\n", iso.HasWarcInfo)
+			fmt.Printf("Response Record:   %v\n", iso.HasResponse)
+			fmt.Printf("Digest Integrity:  %v\n", iso.DigestMatch)
+			fmt.Printf("Total Records:     %d\n", iso.RecordCount)
+			if len(iso.Errors) > 0 {
+				fmt.Printf("Errors:\n")
+				for _, e := range iso.Errors {
+					fmt.Printf("  • %s\n", e)
+				}
+			}
+			if *strict && (!iso.ValidFormat || !iso.DigestMatch) {
+				os.Exit(1)
+			}
+		} else {
+			// Audit as HTML
+			leaks, score := bench.AuditHTML(string(fileBytes))
+			fmt.Printf("\n=== Hermetic Isolation & Privacy Leak Audit for %s ===\n", target)
+			fmt.Printf("Hermetic Score: %.1f / 100.0\n", score)
+			fmt.Printf("Detected Leaks: %d\n", len(leaks))
+			for _, l := range leaks {
+				fmt.Printf("  [%s] %s: %s (%s)\n", l.Severity, l.ElementType, l.URL, l.Description)
+			}
+			if *strict && score < 85.0 {
+				os.Exit(1)
+			}
+		}
+
 	case "version":
 		fmt.Printf("timecapsule v%s\n", version)
 
@@ -538,6 +633,8 @@ Usage:
 Commands:
   save <url>        Capture and preserve a web page snapshot (HTML, WARC, Markdown)
   bundle <target>   Serialize verbatim DOM into a self-contained single-file HTML bundle
+  verify <id|file>  Verify archival fidelity, ISO 28500 WARC compliance, and leak isolation
+  bench             Run empirical archival fidelity and compression benchmark suite
   diff <old> <new>  Compare two historical snapshots with visual line diff
   watch <url>       Watch a webpage for updates and automatically preserve changes
   export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
