@@ -13,13 +13,14 @@ import (
 	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
+	"github.com/Noooblien/timecapsule/pkg/bundle"
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/warc"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -274,6 +275,80 @@ func main() {
 
 		fmt.Println(snap.Markdown)
 
+	case "bundle":
+		bundleCmd := flag.NewFlagSet("bundle", flag.ExitOnError)
+		dataDir := bundleCmd.String("dir", defaultDataDir, "Storage directory")
+		outFile := bundleCmd.String("out", "", "Output single-file HTML path (default: <title/host>.single.html)")
+		safe := bundleCmd.Bool("safe", true, "Neutralize scripts for clean, safe offline reading")
+		timeout := bundleCmd.Duration("timeout", 15*time.Second, "Fetch timeout for sub-resources")
+		_ = bundleCmd.Parse(os.Args[2:])
+
+		args := bundleCmd.Args()
+		if len(args) < 1 {
+			fmt.Println("Error: Snapshot ID or URL required. Usage: timecapsule bundle <id|url> [--out <file.html>] [--safe]")
+			os.Exit(1)
+		}
+		target := args[0]
+
+		cfg := bundle.DefaultBundleConfig()
+		cfg.NeutralizeScripts = *safe
+		cfg.Timeout = *timeout
+		bundler := bundle.NewBundler(cfg)
+
+		store, _ := storage.NewStore(*dataDir)
+		var targetURL, rawHTML string
+
+		// Check if target is a known snapshot ID
+		if store != nil {
+			if snap, ok := store.Get(target); ok {
+				targetURL = snap.URL
+				rawHTML = snap.HTML
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout*2)
+		defer cancel()
+
+		if rawHTML == "" {
+			// Target is a URL: fetch raw HTML first
+			targetURL = target
+			if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+				targetURL = "https://" + targetURL
+			}
+			archiver := archive.NewArchiver(*timeout)
+			snap, err := archiver.Capture(ctx, targetURL)
+			if err != nil {
+				fmt.Printf("❌ Failed to capture %s: %v\n", targetURL, err)
+				os.Exit(1)
+			}
+			rawHTML = snap.HTML
+		}
+
+		fmt.Printf("⏳ Serializing verbatim DOM and inlining assets for %s...\n", targetURL)
+		res, err := bundler.BundleHTML(ctx, targetURL, rawHTML)
+		if err != nil {
+			fmt.Printf("❌ Failed to bundle DOM: %v\n", err)
+			os.Exit(1)
+		}
+
+		outPath := *outFile
+		if outPath == "" {
+			safeName := strings.ReplaceAll(strings.ReplaceAll(targetURL, "https://", ""), "http://", "")
+			safeName = strings.ReplaceAll(safeName, "/", "_")
+			if len(safeName) > 40 {
+				safeName = safeName[:40]
+			}
+			outPath = fmt.Sprintf("%s.single.html", safeName)
+		}
+
+		if err := os.WriteFile(outPath, []byte(res.BundledHTML), 0644); err != nil {
+			fmt.Printf("❌ Failed to write single-file bundle: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Print(bundle.RenderBundleScorecard(res))
+		fmt.Printf("\n✅ Single-file hermetic HTML written to %s (%d bytes)\n\n", outPath, res.BundledSizeBytes)
+
 	case "export":
 		exportCmd := flag.NewFlagSet("export", flag.ExitOnError)
 		dataDir := exportCmd.String("dir", defaultDataDir, "Storage directory")
@@ -462,6 +537,7 @@ Usage:
 
 Commands:
   save <url>        Capture and preserve a web page snapshot (HTML, WARC, Markdown)
+  bundle <target>   Serialize verbatim DOM into a self-contained single-file HTML bundle
   diff <old> <new>  Compare two historical snapshots with visual line diff
   watch <url>       Watch a webpage for updates and automatically preserve changes
   export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
@@ -475,6 +551,7 @@ Commands:
 
 Examples:
   timecapsule save https://news.ycombinator.com
+  timecapsule bundle https://news.ycombinator.com --out hn.single.html
   timecapsule export tc_123 --out archive.warc.gz --gzip
   timecapsule import external_archive.warc.gz
   timecapsule cdx https://news.ycombinator.com
