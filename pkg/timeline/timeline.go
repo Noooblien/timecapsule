@@ -25,6 +25,7 @@ type ReplayPoint struct {
 	ReaderURL   string    `json:"reader_url"`
 	RawURL      string    `json:"raw_url"`
 	WARCURL     string    `json:"warc_url"`
+	BundleURL   string    `json:"bundle_url"`
 	IsCurrent   bool      `json:"is_current,omitempty"`
 }
 
@@ -167,5 +168,6 @@ func SnapshotToReplayPoint(baseURL string, s *archive.Snapshot) ReplayPoint {
 		ReaderURL:   fmt.Sprintf("%s/reader/%s", baseURL, s.ID),
 		RawURL:      fmt.Sprintf("%s/raw/%s", baseURL, s.ID),
 		WARCURL:     fmt.Sprintf("%s/warc/%s", baseURL, s.ID),
+		BundleURL:   fmt.Sprintf("%s/bundle/%s", baseURL, s.ID),
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
+	"github.com/Noooblien/timecapsule/pkg/bundle"
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/memento"
 	"github.com/Noooblien/timecapsule/pkg/reader"
@@ -51,6 +52,8 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/raw/", s.handleRaw)
 	s.mux.HandleFunc("/markdown/", s.handleMarkdown)
 	s.mux.HandleFunc("/reader/", s.handleReader)
+	s.mux.HandleFunc("/bundle/", s.handleBundleHTML)
+	s.mux.HandleFunc("/api/bundle", s.handleAPIBundle)
 	s.mux.HandleFunc("/warc/", s.handleWARC)
 	s.mux.HandleFunc("/timegate/", s.handleTimeGate)
 	s.mux.HandleFunc("/timemap/", s.handleTimeMap)
@@ -590,6 +593,7 @@ button:hover { opacity: 0.9; }
         <a href="/timeline/%s" target="_blank" style="color:#58a6ff;border:1px solid #1f6feb44;">Timeline 📅</a>
         %s
         <a href="/reader/%s" target="_blank">Reader Mode 📖</a>
+        <a href="/bundle/%s" target="_blank" title="Single-File Self-Contained Hermetic DOM Bundle">Bundle HTML 📦</a>
         <a href="/raw/%s" target="_blank">Raw HTML</a>
         <a href="/markdown/%s" target="_blank">Markdown View 📄</a>
         <a href="/warc/%s">Download WARC 📦</a>
@@ -601,7 +605,7 @@ button:hover { opacity: 0.9; }
 				snap.WaybackTS, snap.URL,
 				snap.URL,
 				diffBtn,
-				snap.ID, snap.ID, snap.ID, snap.ID)
+				snap.ID, snap.ID, snap.ID, snap.ID, snap.ID)
 		}
 	}
 
@@ -760,4 +764,63 @@ func (s *Server) handleAPIStoragePrune(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(report)
+}
+
+func (s *Server) handleBundleHTML(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/bundle/")
+	snap, ok := s.store.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	bundler := bundle.NewBundler(bundle.DefaultBundleConfig())
+	res, err := bundler.BundleHTML(r.Context(), snap.URL, snap.HTML)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to generate single-file bundle: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s.bundle.html"`, snap.ID))
+	_, _ = w.Write([]byte(res.BundledHTML))
+}
+
+func (s *Server) handleAPIBundle(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	targetURL := r.URL.Query().Get("url")
+
+	var rawHTML string
+	var resolvedURL string
+
+	if id != "" {
+		snap, ok := s.store.Get(id)
+		if !ok {
+			http.Error(w, `{"error":"snapshot not found"}`, http.StatusNotFound)
+			return
+		}
+		rawHTML = snap.HTML
+		resolvedURL = snap.URL
+	} else if targetURL != "" {
+		snap, err := s.archiver.Capture(r.Context(), targetURL)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"failed to fetch url: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		rawHTML = snap.HTML
+		resolvedURL = snap.URL
+	} else {
+		http.Error(w, `{"error":"missing 'id' or 'url' query parameter"}`, http.StatusBadRequest)
+		return
+	}
+
+	bundler := bundle.NewBundler(bundle.DefaultBundleConfig())
+	res, err := bundler.BundleHTML(r.Context(), resolvedURL, rawHTML)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"bundle serialization failed: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
 }

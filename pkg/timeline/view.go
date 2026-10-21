@@ -114,6 +114,7 @@ func RenderWaybackBanner(nav *NavContext) string {
 	<div class="tb-section">
 		%s
 		<a class="tb-action" href="%s" target="_blank">Reader 📖</a>
+		<a class="tb-action" href="%s" target="_blank">Bundle 📦</a>
 		<a class="tb-action" href="%s" target="_blank">WARC 📦</a>
 		<a class="tb-btn" href="%s" target="_blank" title="Live Website">Live URL ↗</a>
 		<a class="tb-exit" href="/">← Exit</a>
@@ -127,7 +128,7 @@ func RenderWaybackBanner(nav *NavContext) string {
 		html.EscapeString(hashShort),
 		firstBtn, prevBtn, nextBtn, lastBtn,
 		diffLinks,
-		nav.Current.ReaderURL, nav.Current.WARCURL,
+		nav.Current.ReaderURL, nav.Current.BundleURL, nav.Current.WARCURL,
 		html.EscapeString(nav.Current.ReplayURL[strings.Index(nav.Current.ReplayURL, "/http")+1:]),
 	)
 }
@@ -185,12 +186,13 @@ func RenderTimelinePage(tl *URLTimeline) string {
 				<a class="btn-sm btn-primary" href="%s">Replay ⏳</a>
 				%s
 				<a class="btn-sm" href="%s" target="_blank">Reader 📖</a>
+				<a class="btn-sm" href="%s" target="_blank">Bundle 📦</a>
 				<a class="btn-sm" href="%s">WARC 📦</a>
 			</td>
 		</tr>`,
 			i+1, c.ReplayURL, c.Timestamp.Format("2006-01-02 15:04:05 UTC"),
 			c.StatusCode, html.EscapeString(c.ContentType), c.SizeBytes/1024,
-			c.ReplayURL, diffBtn, c.ReaderURL, c.WARCURL)
+			c.ReplayURL, diffBtn, c.ReaderURL, c.BundleURL, c.WARCURL)
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
