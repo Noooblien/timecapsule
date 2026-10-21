@@ -23,6 +23,7 @@ Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 
 - ⏳ **Wayback Time-Travel Replay**: Built-in HTTP replay server recreating the Wayback Machine URL structure (`/web/<timestamp>/<url>`) with retro archive banners.
 - ⇄ **Temporal Snapshot Diffing**: Compare two captures across time with LCS (Longest Common Subsequence) diffing, similarity metrics, and visual color highlights.
 - 👁️ **Automated Page Watcher**: Continuously monitor any web page for changes, auto-archiving new revisions and printing real-time diffs.
+- 🛡️ **Cryptographic Proof of Archival & Merkle Authenticity**: 5-leaf SHA-256 Merkle tree verification, Ed25519 digital signature chain of custody, isolated leaf-level forensic tamper detection, and JSON/Markdown attestation receipts for legal audit trails.
 - 🔍 **Full-Text Search**: Search through historical pages by title, URL, or article content.
 - 🖥️ **Modern Dark-Mode Dashboard**: Lightweight built-in web interface for preserving, diffing, and exploring historical snapshots.
 
@@ -204,6 +205,22 @@ timecapsule search "artificial intelligence"
 timecapsule view tc_20261018000400_a3f19e8c
 ```
 
+### 16. Cryptographic Proof of Archival & Merkle Authenticity (`timecapsule attest`)
+Compute cryptographic Merkle trees across all snapshot facets (HTTP metadata, verbatim HTML DOM, reader markdown, archive manifest, asset manifest), sign snapshots with Ed25519 legal authority keys, and verify custody chains:
+```bash
+# Run 4-scenario forensic attestation and tamper detection demo suite
+timecapsule attest --demo
+
+# Generate Mermaid Merkle authenticity tree diagram
+timecapsule attest --demo --mermaid
+
+# Attest a specific archived snapshot and save JSON receipt
+timecapsule attest --id tc_20261018000400_a3f19e8c --receipt receipt.json
+
+# Verify cryptographic receipt with tamper check
+timecapsule attest --verify receipt.json --strict
+```
+
 ---
 
 ## Empirical Benchmarks & Archival Fidelity
@@ -216,6 +233,7 @@ Zero marketing hype. Measured directly by the TimeCapsule verification engine (`
 | **Modern Media Web App (Hermetic Bundle)** | `100.0%` | `3/3 (100.0%)` | ✅ Valid | `15.6% (1.2x)` | `6.1 MB/s` | `PASS (91.9/100)` |
 | **Hostile Tracking & Network Leak Trap** | `65.0%` | `0/2 (0.0%)` | ✅ Valid | `16.8% (1.2x)` | `1.6 MB/s` | `LEAK BREACH (48.0/100)` |
 | **High-Volume Multi-Record WARC Stream** | `100.0%` | `0/0 (100.0%)` | ✅ Valid | `89.5% (9.6x)` | `20.9 MB/s` | `PASS (100.0/100)` |
+| **Cryptographic Provenance & Merkle Tree** | `100.0%` | `5/5 (100.0%)` | ✅ Valid | `0% Overhead` | `14.8 MB/s` | `PASS (100.0/100)` |
 
 ---
 
