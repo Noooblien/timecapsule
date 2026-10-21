@@ -97,6 +97,16 @@ func (r *Reader) NextRecord() (*Record, error) {
 				rec.WarcinfoID = v
 			case "warc-ip-address":
 				rec.IPAddress = v
+			case "warc-profile":
+				rec.Profile = v
+			case "warc-refers-to":
+				rec.RefersToRecordID = v
+			case "warc-refers-to-target-uri":
+				rec.RefersToTargetURI = v
+			case "warc-refers-to-date":
+				if parsedDate, err := time.Parse(time.RFC3339, v); err == nil {
+					rec.RefersToDate = parsedDate
+				}
 			}
 		}
 	}
@@ -113,7 +123,7 @@ func (r *Reader) NextRecord() (*Record, error) {
 	rec.RawBlock = block
 
 	// 4. Parse HTTP protocol headers if applicable
-	if rec.Type == RecordTypeResponse || rec.Type == RecordTypeRequest {
+	if rec.Type == RecordTypeResponse || rec.Type == RecordTypeRequest || rec.Type == RecordTypeRevisit {
 		parseHTTPPayload(rec)
 	}
 
@@ -131,7 +141,7 @@ func parseHTTPPayload(rec *Record) {
 	firstLine := string(lineBytes)
 	rec.HTTPStatusLine = firstLine
 
-	if rec.Type == RecordTypeResponse {
+	if rec.Type == RecordTypeResponse || rec.Type == RecordTypeRevisit {
 		parts := strings.Split(firstLine, " ")
 		if len(parts) >= 2 {
 			if code, err := strconv.Atoi(parts[1]); err == nil {

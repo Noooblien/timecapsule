@@ -567,6 +567,7 @@ func main() {
 		dataDir := exportCmd.String("dir", defaultDataDir, "Storage directory")
 		outFile := exportCmd.String("out", "", "Output file path (default: <id>.warc or <id>.warc.gz)")
 		useGzip := exportCmd.Bool("gzip", false, "Compress output with GZIP (ISO 28500 Annex D)")
+		revisitBase := exportCmd.String("revisit-base", "", "Base snapshot ID to emit deduplicated revisit record")
 		_ = exportCmd.Parse(os.Args[2:])
 
 		args := exportCmd.Args()
@@ -607,7 +608,17 @@ func main() {
 		defer f.Close()
 
 		writer := warc.NewWriter(f, isGz)
-		cdxEntries, err := writer.WriteSnapshotArchive(snap, filepath.Base(targetFile))
+		var cdxEntries []warc.CDXJEntry
+		if *revisitBase != "" {
+			baseSnap, ok := store.Get(*revisitBase)
+			if !ok {
+				fmt.Printf("Error: Base snapshot '%s' not found for revisit emission\n", *revisitBase)
+				os.Exit(1)
+			}
+			cdxEntries, err = writer.WriteSnapshotRevisit(snap, baseSnap, filepath.Base(targetFile))
+		} else {
+			cdxEntries, err = writer.WriteSnapshotArchive(snap, filepath.Base(targetFile))
+		}
 		if err != nil {
 			fmt.Printf("Error exporting WARC: %v\n", err)
 			os.Exit(1)
@@ -1187,7 +1198,7 @@ Commands:
   diff <old> <new>  Compare two historical snapshots with visual line diff
   vdiff <old> <new> Temporal visual & DOM tree diff with dual-pane HTML, Mermaid & scorecards
   watch [options]   Continuous website drift watcher, change alerts & automated snapshots
-  export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
+  export <id>       Export snapshot as ISO 28500 WARC (optional --gzip, --revisit-base <id>)
   import <file>     Import an external ISO 28500 WARC archive into TimeCapsule
   cdx [url]         Generate standard CDXJ 1.1 capture index
   prune [opts]      Storage garbage collection, SHA-256 deduplication & retention policies

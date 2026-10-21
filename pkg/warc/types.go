@@ -16,6 +16,11 @@ const (
 	RecordTypeResource RecordType = "resource"
 )
 
+const (
+	ProfileIdenticalPayloadDigest = "http://netpreserve.org/warc/1.0/revisit/identical-payload-digest"
+	ProfileServerNotModified      = "http://netpreserve.org/warc/1.0/revisit/server-not-modified"
+)
+
 // Record represents an in-memory ISO 28500 WARC record.
 type Record struct {
 	Version        string            `json:"version"`          // e.g. "WARC/1.0"
@@ -28,8 +33,12 @@ type Record struct {
 	WarcinfoID     string            `json:"warcinfo_id,omitempty"`
 	PayloadDigest  string            `json:"payload_digest,omitempty"` // sha256:...
 	BlockDigest    string            `json:"block_digest,omitempty"`
-	ConcurrentTo   []string          `json:"concurrent_to,omitempty"`
-	Headers        map[string]string `json:"headers"`          // All raw WARC headers
+	ConcurrentTo        []string          `json:"concurrent_to,omitempty"`
+	Profile             string            `json:"profile,omitempty"`              // e.g. "http://netpreserve.org/warc/1.0/revisit/identical-payload-digest"
+	RefersToTargetURI   string            `json:"refers_to_target_uri,omitempty"` // For revisit records
+	RefersToDate        time.Time         `json:"refers_to_date,omitempty"`       // For revisit records
+	RefersToRecordID    string            `json:"refers_to_record_id,omitempty"`  // <urn:uuid:...> of base record
+	Headers             map[string]string `json:"headers"`          // All raw WARC headers
 	RawBlock       []byte            `json:"-"`                // Unparsed block bytes
 
 	// Protocol-level HTTP payload fields (populated for request/response records)

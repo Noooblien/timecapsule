@@ -45,6 +45,8 @@ func (wr *Writer) WriteRecord(rec *Record) (int64, int64, error) {
 	if len(block) == 0 {
 		if rec.Type == RecordTypeResponse || rec.Type == RecordTypeRequest {
 			block = assembleHTTPBlock(rec)
+		} else if rec.Type == RecordTypeRevisit {
+			block = assembleHTTPHeaderOnlyBlock(rec)
 		}
 	}
 
@@ -83,6 +85,18 @@ func (wr *Writer) WriteRecord(rec *Record) (int64, int64, error) {
 	}
 	for _, c := range rec.ConcurrentTo {
 		headerBuf.WriteString(fmt.Sprintf("WARC-Concurrent-To: %s\r\n", c))
+	}
+	if rec.Profile != "" {
+		headerBuf.WriteString(fmt.Sprintf("WARC-Profile: %s\r\n", rec.Profile))
+	}
+	if rec.RefersToRecordID != "" {
+		headerBuf.WriteString(fmt.Sprintf("WARC-Refers-To: %s\r\n", rec.RefersToRecordID))
+	}
+	if rec.RefersToTargetURI != "" {
+		headerBuf.WriteString(fmt.Sprintf("WARC-Refers-To-Target-URI: %s\r\n", rec.RefersToTargetURI))
+	}
+	if !rec.RefersToDate.IsZero() {
+		headerBuf.WriteString(fmt.Sprintf("WARC-Refers-To-Date: %s\r\n", rec.RefersToDate.Format(time.RFC3339)))
 	}
 
 	contentType := rec.ContentType
@@ -278,4 +292,109 @@ func extractHost(rawURL string) string {
 		return rawURL[:slashIdx]
 	}
 	return rawURL
+}
+
+func assembleHTTPHeaderOnlyBlock(rec *Record) []byte {
+	var buf bytes.Buffer
+	if rec.HTTPStatusLine != "" {
+		buf.WriteString(rec.HTTPStatusLine + "\r\n")
+	} else if rec.HTTPStatusCode > 0 {
+		buf.WriteString(fmt.Sprintf("HTTP/1.1 %d OK\r\n", rec.HTTPStatusCode))
+	} else {
+		buf.WriteString("HTTP/1.1 200 OK\r\n")
+	}
+
+	var keys []string
+	for k := range rec.HTTPHeaders {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, rec.HTTPHeaders[k]))
+	}
+	buf.WriteString("\r\n")
+	return buf.Bytes()
+}
+
+// WriteSnapshotRevisit writes a deduplicated ISO 28500 revisit record suite referencing an earlier base snapshot
+// when identical payload digest is detected. Saves up to 99% bandwidth and disk footprint.
+func (wr *Writer) WriteSnapshotRevisit(currSnap, baseSnap *archive.Snapshot, filename string) ([]CDXJEntry, error) {
+	var cdxEntries []CDXJEntry
+
+	warcinfoID := fmt.Sprintf("<urn:uuid:info-%s>", currSnap.ID)
+	revisitID := fmt.Sprintf("<urn:uuid:revisit-%s>", currSnap.ID)
+	requestID := fmt.Sprintf("<urn:uuid:req-%s>", currSnap.ID)
+	baseRecordID := fmt.Sprintf("<urn:uuid:resp-%s>", baseSnap.ID)
+
+	// 1. Warcinfo Record
+	warcinfoBlock := fmt.Sprintf("software: TimeCapsule/1.2.0 (+https://github.com/Noooblien/timecapsule)\r\n"+
+		"format: WARC File Format 1.0\r\n"+
+		"conformsTo: http://bibnum.bnf.fr/WARC/WARC_ISO_28500_version1_latestdraft.pdf\r\n"+
+		"robots: ignore\r\n"+
+		"http-header-user-agent: Mozilla/5.0 (compatible; TimeCapsule/1.2.0; +https://github.com/Noooblien/timecapsule)\r\n")
+
+	infoRec := &Record{
+		Type:        RecordTypeWarcinfo,
+		RecordID:    warcinfoID,
+		Date:        currSnap.Timestamp,
+		ContentType: "application/warc-fields",
+		RawBlock:    []byte(warcinfoBlock),
+	}
+	if _, _, err := wr.WriteRecord(infoRec); err != nil {
+		return nil, fmt.Errorf("failed to write warcinfo record: %w", err)
+	}
+
+	// 2. Request Record
+	reqRec := &Record{
+		Type:         RecordTypeRequest,
+		RecordID:     requestID,
+		Date:         currSnap.Timestamp,
+		TargetURI:    currSnap.URL,
+		WarcinfoID:   warcinfoID,
+		ConcurrentTo: []string{revisitID},
+		RawBlock:     []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nUser-Agent: TimeCapsule/1.2.0\r\nAccept: text/html,application/xhtml+xml\r\n\r\n", extractHost(currSnap.URL))),
+	}
+	if _, _, err := wr.WriteRecord(reqRec); err != nil {
+		return nil, fmt.Errorf("failed to write request record: %w", err)
+	}
+
+	// 3. Revisit Record (ISO 28500 Section 6.7)
+	revisitRec := &Record{
+		Type:              RecordTypeRevisit,
+		RecordID:          revisitID,
+		Date:              currSnap.Timestamp,
+		TargetURI:         currSnap.URL,
+		WarcinfoID:        warcinfoID,
+		ConcurrentTo:      []string{requestID},
+		Profile:           ProfileIdenticalPayloadDigest,
+		RefersToRecordID:  baseRecordID,
+		RefersToTargetURI: baseSnap.URL,
+		RefersToDate:      baseSnap.Timestamp,
+		HTTPStatusCode:    currSnap.StatusCode,
+		HTTPStatusLine:    fmt.Sprintf("HTTP/1.1 %d OK", currSnap.StatusCode),
+		HTTPHeaders:       currSnap.Headers,
+		PayloadDigest:     "sha256:" + currSnap.ContentHash,
+	}
+
+	offset, length, err := wr.WriteRecord(revisitRec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write revisit record: %w", err)
+	}
+
+	// CDXJ Index Entry for Revisit Record
+	surt := ToSURT(currSnap.URL)
+	cdxEntries = append(cdxEntries, CDXJEntry{
+		SURT:        surt,
+		Timestamp:   currSnap.WaybackTS,
+		OriginalURL: currSnap.URL,
+		MimeType:    "warc/revisit",
+		StatusCode:  currSnap.StatusCode,
+		Digest:      currSnap.ContentHash,
+		Length:      length,
+		Offset:      offset,
+		Filename:    filename,
+	})
+
+	return cdxEntries, nil
 }
