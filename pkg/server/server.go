@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
 	"github.com/Noooblien/timecapsule/pkg/diff"
@@ -55,6 +56,8 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/timemap/", s.handleTimeMap)
 	s.mux.HandleFunc("/timeline/", s.handleTimeline)
 	s.mux.HandleFunc("/api/timeline/", s.handleAPITimeline)
+	s.mux.HandleFunc("/api/storage/stats", s.handleAPIStorageStats)
+	s.mux.HandleFunc("/api/storage/prune", s.handleAPIStoragePrune)
 
 	return s
 }
@@ -717,4 +720,44 @@ func (s *Server) handleAPITimeline(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(tl)
+}
+
+func (s *Server) handleAPIStorageStats(w http.ResponseWriter, r *http.Request) {
+	stats := s.store.Stats()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleAPIStoragePrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	opts := storage.PruneOptions{
+		TargetURL:   r.URL.Query().Get("url"),
+		Deduplicate: r.URL.Query().Get("dedup") == "true" || r.URL.Query().Get("dedup") == "1",
+		DryRun:      r.URL.Query().Get("dry_run") == "true" || r.URL.Query().Get("dry_run") == "1",
+	}
+
+	if ageStr := r.URL.Query().Get("max_age"); ageStr != "" {
+		if d, err := time.ParseDuration(ageStr); err == nil {
+			opts.MaxAge = d
+		}
+	}
+
+	if keepStr := r.URL.Query().Get("keep"); keepStr != "" {
+		if k, err := strconv.Atoi(keepStr); err == nil && k > 0 {
+			opts.KeepPerURL = k
+		}
+	}
+
+	report, err := s.store.Prune(opts)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"prune failed: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
 }

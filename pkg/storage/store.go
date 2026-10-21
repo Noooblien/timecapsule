@@ -198,6 +198,64 @@ func (s *Store) Search(query string) []*archive.Snapshot {
 	return results
 }
 
+
+// Delete removes a snapshot by ID from storage and the in-memory index.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snap, ok := s.index[id]
+	if !ok {
+		return fmt.Errorf("snapshot '%s' not found", id)
+	}
+
+	dir := filepath.Join(s.baseDir, "capsules", snap.ID)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("failed to remove snapshot dir: %w", err)
+	}
+
+	delete(s.index, id)
+	return s.persistIndex()
+}
+
+// StorageStats provides an overview of repository disk usage and counts.
+type StorageStats struct {
+	TotalSnapshots int64            `json:"total_snapshots"`
+	TotalBytes     int64            `json:"total_bytes"`
+	UniqueURLs     int              `json:"unique_urls"`
+	OldestSnapshot *archive.Snapshot `json:"oldest_snapshot,omitempty"`
+	NewestSnapshot *archive.Snapshot `json:"newest_snapshot,omitempty"`
+}
+
+// Stats computes storage space usage and metadata statistics.
+func (s *Store) Stats() StorageStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stats := StorageStats{
+		TotalSnapshots: int64(len(s.index)),
+	}
+
+	urlMap := make(map[string]bool)
+	var list []*archive.Snapshot
+	for _, snap := range s.index {
+		stats.TotalBytes += snap.SizeBytes
+		urlMap[normalizeURL(snap.URL)] = true
+		list = append(list, snap)
+	}
+	stats.UniqueURLs = len(urlMap)
+
+	if len(list) > 0 {
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].Timestamp.Before(list[j].Timestamp)
+		})
+		stats.OldestSnapshot = list[0]
+		stats.NewestSnapshot = list[len(list)-1]
+	}
+
+	return stats
+}
+
 func (s *Store) persistIndex() error {
 	indexPath := filepath.Join(s.baseDir, "index.json")
 	data, err := json.MarshalIndent(s.index, "", "  ")

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"encoding/json"
 	"log"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -730,6 +731,58 @@ func main() {
 			fmt.Printf("Server exited: %v\n", err)
 		}
 
+	case "prune":
+		pruneCmd := flag.NewFlagSet("prune", flag.ExitOnError)
+		dataDir := pruneCmd.String("dir", defaultDataDir, "Storage directory")
+		maxAgeStr := pruneCmd.String("max-age", "", "Maximum age of snapshots to retain (e.g. 720h, 30d)")
+		keep := pruneCmd.Int("keep", 0, "Number of latest snapshots to retain per URL")
+		dedup := pruneCmd.Bool("dedup", false, "Prune consecutive identical snapshots (matching SHA-256 hash)")
+		dryRun := pruneCmd.Bool("dry-run", false, "Preview snapshots that will be deleted without deleting")
+		format := pruneCmd.String("format", "scorecard", "Output format: scorecard, json")
+		_ = pruneCmd.Parse(os.Args[2:])
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			log.Fatalf("Failed to open storage: %v", err)
+		}
+
+		opts := storage.PruneOptions{
+			KeepPerURL:  *keep,
+			Deduplicate: *dedup,
+			DryRun:      *dryRun,
+		}
+
+		if len(pruneCmd.Args()) > 0 {
+			opts.TargetURL = pruneCmd.Args()[0]
+		}
+
+		if *maxAgeStr != "" {
+			if strings.HasSuffix(*maxAgeStr, "d") {
+				daysStr := strings.TrimSuffix(*maxAgeStr, "d")
+				if days, err := strconv.Atoi(daysStr); err == nil {
+					opts.MaxAge = time.Duration(days) * 24 * time.Hour
+				}
+			} else {
+				if d, err := time.ParseDuration(*maxAgeStr); err == nil {
+					opts.MaxAge = d
+				}
+			}
+		}
+
+		report, err := store.Prune(opts)
+		if err != nil {
+			log.Fatalf("Prune failed: %v", err)
+		}
+
+		switch *format {
+		case "json":
+			bytes, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Println(string(bytes))
+		default:
+			fmt.Print(storage.RenderPruneScorecard(report))
+		}
+		return
+
 	case "timeline":
 		tlCmd := flag.NewFlagSet("timeline", flag.ExitOnError)
 		dataDir := tlCmd.String("dir", defaultDataDir, "Storage directory")
@@ -1137,6 +1190,7 @@ Commands:
   export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
   import <file>     Import an external ISO 28500 WARC archive into TimeCapsule
   cdx [url]         Generate standard CDXJ 1.1 capture index
+  prune [opts]      Storage garbage collection, SHA-256 deduplication & retention policies
   timeline [opts]   Interactive temporal replay timeline & capture frequency histogram
   memento [opts]    RFC 7089 TimeGate datetime negotiation & TimeMap link-format index
   list              List all archived web page snapshots
@@ -1147,6 +1201,9 @@ Commands:
 
 Examples:
   timecapsule timeline https://news.ycombinator.com [--mermaid]
+  timecapsule prune --dedup --dry-run
+  timecapsule prune https://news.ycombinator.com --keep 5
+  timecapsule prune --max-age 30d
   timecapsule timeline --demo [--mermaid] [--format text|json|mermaid|html]
   timecapsule memento --demo [--mermaid] [--format text|markdown|json]
   timecapsule memento timegate https://news.ycombinator.com -time "2024-02-15T18:30:00Z"
