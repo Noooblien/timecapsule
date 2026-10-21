@@ -14,6 +14,7 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/reader"
 	"github.com/Noooblien/timecapsule/pkg/storage"
+	"github.com/Noooblien/timecapsule/pkg/visualdiff"
 	"github.com/Noooblien/timecapsule/pkg/warc"
 	"github.com/Noooblien/timecapsule/pkg/watcher"
 )
@@ -38,11 +39,13 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/api/snapshots", s.handleAPISnapshots)
 	s.mux.HandleFunc("/api/capture", s.handleAPICapture)
 	s.mux.HandleFunc("/api/diff", s.handleAPIDiff)
+	s.mux.HandleFunc("/api/diff/visual", s.handleAPIVisualDiff)
 	s.mux.HandleFunc("/api/watchers", s.handleAPIWatchers)
 	s.mux.HandleFunc("/cdx", s.handleCDX)
 	s.mux.HandleFunc("/api/cdx", s.handleCDX)
 	s.mux.HandleFunc("/web/", s.handleWaybackReplay)
 	s.mux.HandleFunc("/diff/", s.handleDiff)
+	s.mux.HandleFunc("/vdiff/", s.handleVisualDiff)
 	s.mux.HandleFunc("/raw/", s.handleRaw)
 	s.mux.HandleFunc("/markdown/", s.handleMarkdown)
 	s.mux.HandleFunc("/reader/", s.handleReader)
@@ -151,6 +154,61 @@ func (s *Server) handleAPIDiff(w http.ResponseWriter, r *http.Request) {
 	res := diff.CompareSnapshots(oldSnap, newSnap)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleAPIVisualDiff(w http.ResponseWriter, r *http.Request) {
+	oldID := r.URL.Query().Get("old")
+	newID := r.URL.Query().Get("new")
+
+	if oldID == "" || newID == "" {
+		http.Error(w, `{"error":"missing 'old' or 'new' query parameter"}`, http.StatusBadRequest)
+		return
+	}
+
+	oldSnap, ok := s.store.Get(oldID)
+	if !ok {
+		http.Error(w, fmt.Sprintf(`{"error":"snapshot '%s' not found"}`, oldID), http.StatusNotFound)
+		return
+	}
+	newSnap, ok := s.store.Get(newID)
+	if !ok {
+		http.Error(w, fmt.Sprintf(`{"error":"snapshot '%s' not found"}`, newID), http.StatusNotFound)
+		return
+	}
+
+	engine := visualdiff.NewEngine(visualdiff.DefaultVisualDiffConfig())
+	res := engine.CompareSnapshots(oldSnap, newSnap)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleVisualDiff(w http.ResponseWriter, r *http.Request) {
+	// Format: /vdiff/{old_id}/{new_id}
+	trimmed := strings.TrimPrefix(r.URL.Path, "/vdiff/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 2 {
+		http.Error(w, "Usage: /vdiff/{old_id}/{new_id}", http.StatusBadRequest)
+		return
+	}
+	oldID := parts[0]
+	newID := parts[1]
+
+	oldSnap, ok := s.store.Get(oldID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	newSnap, ok := s.store.Get(newID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	engine := visualdiff.NewEngine(visualdiff.DefaultVisualDiffConfig())
+	res := engine.CompareSnapshots(oldSnap, newSnap)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(visualdiff.RenderVisualDiffHTML(res, oldSnap, newSnap)))
 }
 
 func (s *Server) handleWaybackReplay(w http.ResponseWriter, r *http.Request) {

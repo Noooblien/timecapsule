@@ -19,11 +19,12 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/reader"
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
+	"github.com/Noooblien/timecapsule/pkg/visualdiff"
 	"github.com/Noooblien/timecapsule/pkg/warc"
 	"github.com/Noooblien/timecapsule/pkg/watcher"
 )
 
-const version = "1.4.0"
+const version = "1.5.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -113,6 +114,73 @@ func main() {
 
 		res := diff.CompareSnapshots(oldSnap, newSnap)
 		fmt.Print(res.FormatANSI())
+
+	case "vdiff":
+		vdiffCmd := flag.NewFlagSet("vdiff", flag.ExitOnError)
+		dataDir := vdiffCmd.String("dir", defaultDataDir, "Storage directory")
+		demo := vdiffCmd.Bool("demo", false, "Run 4-scenario temporal visual diff demo suite")
+		mermaid := vdiffCmd.Bool("mermaid", false, "Render Mermaid DOM mutation subtree diagram")
+		markdown := vdiffCmd.Bool("markdown", false, "Render Markdown summary report")
+		htmlOut := vdiffCmd.String("html", "", "Output dual-pane interactive visual diff HTML file")
+		_ = vdiffCmd.Parse(os.Args[2:])
+
+		if *demo {
+			out, err := visualdiff.RunDemo(*mermaid, *markdown)
+			if err != nil {
+				fmt.Printf("Visual diff demo failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println(out)
+			return
+		}
+
+		args := vdiffCmd.Args()
+		if len(args) < 2 {
+			fmt.Println("Error: Two snapshot IDs required. Usage: timecapsule vdiff <old_id> <new_id> [--demo] [--mermaid] [--markdown] [--html <out.html>]")
+			os.Exit(1)
+		}
+		oldID := args[0]
+		newID := args[1]
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			fmt.Printf("Storage error: %v\n", err)
+			os.Exit(1)
+		}
+
+		oldSnap, ok := store.Get(oldID)
+		if !ok {
+			fmt.Printf("Error: Snapshot '%s' not found\n", oldID)
+			os.Exit(1)
+		}
+		newSnap, ok := store.Get(newID)
+		if !ok {
+			fmt.Printf("Error: Snapshot '%s' not found\n", newID)
+			os.Exit(1)
+		}
+
+		engine := visualdiff.NewEngine(visualdiff.DefaultVisualDiffConfig())
+		res := engine.CompareSnapshots(oldSnap, newSnap)
+
+		if *htmlOut != "" {
+			htmlContent := visualdiff.RenderVisualDiffHTML(res, oldSnap, newSnap)
+			if err := os.WriteFile(*htmlOut, []byte(htmlContent), 0644); err != nil {
+				fmt.Printf("Failed to write HTML diff file: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("✅ Dual-pane visual diff HTML written to %s (%d bytes)\n", *htmlOut, len(htmlContent))
+			return
+		}
+
+		if *markdown {
+			fmt.Println(visualdiff.RenderMarkdownReport(res))
+		} else {
+			fmt.Print(visualdiff.RenderVisualScorecard(res))
+		}
+
+		if *mermaid {
+			fmt.Println(visualdiff.RenderMermaidDOMTree(res))
+		}
 
 	case "watch":
 		watchCmd := flag.NewFlagSet("watch", flag.ExitOnError)
@@ -775,6 +843,7 @@ Commands:
   verify <id|file>  Verify archival fidelity, ISO 28500 WARC compliance, and leak isolation
   bench             Run empirical archival fidelity and compression benchmark suite
   diff <old> <new>  Compare two historical snapshots with visual line diff
+  vdiff <old> <new> Temporal visual & DOM tree diff with dual-pane HTML, Mermaid & scorecards
   watch [options]   Continuous website drift watcher, change alerts & automated snapshots
   export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
   import <file>     Import an external ISO 28500 WARC archive into TimeCapsule
@@ -796,6 +865,8 @@ Examples:
   timecapsule import external_archive.warc.gz
   timecapsule cdx https://news.ycombinator.com
   timecapsule diff snap_123 snap_456
+  timecapsule vdiff --demo --mermaid
+  timecapsule vdiff snap_123 snap_456 --html diff.html
   timecapsule watch https://github.com/trending --interval 1m
   timecapsule serve --port 8080
   timecapsule search "artificial intelligence"

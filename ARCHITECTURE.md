@@ -49,4 +49,10 @@
 ### 3. `pkg/server`
 - **Wayback Replay Engine (`/web/{timestamp}/{url}`)**: Replays captured web pages exactly as they looked on that date, injecting an archival banner with original timestamp and live link.
 - **Web Dashboard (`/`)**: Dark-mode dashboard to preserve new URLs, search history, and view/download raw HTML, markdown, and WARC records.
-- **REST APIs**: Automated endpoints for capturing (`/api/capture?url=...`) and listing (`/api/snapshots`).
+- **REST APIs**: Automated endpoints for capturing (`/api/capture?url=...`), listing (`/api/snapshots`), and visual diff analysis (`/api/diff/visual`).
+- **Interactive Dual-Pane Diff (`/vdiff/{old_id}/{new_id}`)**: Interactive visual side-by-side comparison with iframe sandboxes and mutation tables.
+
+### 4. `pkg/visualdiff`
+- **Hierarchical DOM Parser (`dom_parser.go`)**: Pure Go recursive tokenizer that parses HTML into structural trees with CSS selector paths, semantic block recognition (`PRICING_TABLE`, `HERO_BANNER`, `NAVIGATION`), and subtree hashing.
+- **Temporal Visual Diff Engine (`engine.go`)**: Detects node additions, deletions, text mutations, attribute updates, and structural layout shifts with similarity and drift scores.
+- **Scorecards & Interactive Views (`scorecard.go`, `render_html.go`)**: Generates ANSI terminal scorecards, Mermaid DOM mutation subtree diagrams, and standalone dual-pane HTML comparisons.

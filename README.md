@@ -78,7 +78,23 @@ Similarity: 94.2% (+5 / -3)
 + 2. New AI model release (85 points)
 ```
 
-### 3. Continuous Page Watcher & Website Drift Monitor
+### 3. Temporal Visual & Hierarchical DOM Tree Diff (`vdiff`)
+Analyze structural mutations, text drift, and component additions/deletions across semantic blocks (`PRICING_TABLE`, `HERO_BANNER`, `NAVIGATION`, `CTA`, `FOOTER`):
+```bash
+# Run 4-scenario visual diff benchmark demo
+timecapsule vdiff --demo
+
+# Generate Mermaid flowchart diagram of impacted DOM subtrees
+timecapsule vdiff --demo --mermaid
+
+# Compare two snapshots and generate an interactive dual-pane HTML diff
+timecapsule vdiff snap_old snap_new --html diff_visual.html
+
+# Output GitHub Markdown summary report for pull request gates
+timecapsule vdiff snap_old snap_new --markdown
+```
+
+### 4. Continuous Page Watcher & Website Drift Monitor
 Monitor any live URL or registry of web pages for updates with automated drift classification, noise filtering, webhook alerts, and auto-archival:
 ```bash
 # Run multi-target simulated drift & mutation benchmark demo
@@ -97,7 +113,7 @@ timecapsule watch --poll
 timecapsule watch --demo --mermaid
 ```
 
-### 4. Distraction-Free Offline Reader & Markdown Conversion
+### 5. Distraction-Free Offline Reader & Markdown Conversion
 Convert any live URL or existing snapshot into clean Markdown with metadata frontmatter or standalone distraction-free Reader View HTML:
 ```bash
 # Convert live URL to clean Markdown with YAML frontmatter
@@ -110,7 +126,7 @@ timecapsule reader tc_20261018000400_a3f19e8c --out article.md --frontmatter
 timecapsule reader https://blog.example.com/post --html --out reader.html
 ```
 
-### 5. Create Hermetic Single-File DOM Bundle
+### 6. Create Hermetic Single-File DOM Bundle
 Inline all remote assets (stylesheets, nested CSS fonts/images, images) and neutralize active scripts into a self-contained, offline-viewable HTML file:
 ```bash
 # Bundle directly from a live URL
@@ -120,25 +136,25 @@ timecapsule bundle https://news.ycombinator.com --out hn.single.html
 timecapsule bundle tc_20261018000400_a3f19e8c --out snapshot.single.html
 ```
 
-### 6. Export ISO 28500 WARC Archive
+### 7. Export ISO 28500 WARC Archive
 Export any snapshot into standard ISO 28500 multi-record WARC file (with optional Annex D GZIP compression):
 ```bash
 timecapsule export tc_20261018000400_a3f19e8c --out my_archive.warc.gz --gzip
 ```
 
-### 7. Import External WARC Dumps
+### 8. Import External WARC Dumps
 Import existing WARC archives from the Internet Archive, Common Crawl, or wget crawls directly into TimeCapsule:
 ```bash
 timecapsule import external_crawl.warc.gz
 ```
 
-### 8. Generate Standard CDXJ Index
+### 9. Generate Standard CDXJ Index
 Output standard CDXJ 1.1 capture index entries with SURT keys:
 ```bash
 timecapsule cdx https://news.ycombinator.com
 ```
 
-### 9. Run Archival Fidelity & ISO 28500 Benchmark
+### 10. Run Archival Fidelity & ISO 28500 Benchmark
 Empirically assert hermetic isolation, asset preservation ratio, ISO 28500 WARC standard compliance, and compression efficiency across test corpuses:
 ```bash
 # Run 4-corpus empirical benchmark suite
@@ -148,7 +164,7 @@ timecapsule bench --demo
 timecapsule bench --demo --markdown
 ```
 
-### 10. Verify Archival Isolation & Privacy Leak Audit
+### 11. Verify Archival Isolation & Privacy Leak Audit
 Audit any snapshot, WARC file, or standalone HTML file for un-neutralized active scripts, remote network leaks, or corrupt WARC headers:
 ```bash
 # Verify a captured snapshot
@@ -161,27 +177,29 @@ timecapsule verify crawl.warc.gz
 timecapsule verify page.single.html
 ```
 
-### 11. Launch the Wayback Replay Web Server
+### 12. Launch the Wayback Replay Web Server
 ```bash
 timecapsule serve --port 8080
 ```
 Open `http://localhost:8080` in your browser to browse your personal archive, replay historical pages, or visually inspect side-by-side diffs at:
 - Replay: `http://localhost:8080/web/<timestamp>/<url>`
 - Reader View: `http://localhost:8080/reader/<id>`
-- Diff: `http://localhost:8080/diff/<old_id>/<new_id>`
+- Visual Dual-Pane Diff: `http://localhost:8080/vdiff/<old_id>/<new_id>`
+- Visual Diff API: `http://localhost:8080/api/diff/visual?old=<old_id>&new=<new_id>`
+- Text Diff: `http://localhost:8080/diff/<old_id>/<new_id>`
 - CDX API: `http://localhost:8080/cdx?url=https://news.ycombinator.com&output=json`
 
-### 12. List Archived Snapshots
+### 13. List Archived Snapshots
 ```bash
 timecapsule list
 ```
 
-### 13. Search Historical Pages
+### 14. Search Historical Pages
 ```bash
 timecapsule search "artificial intelligence"
 ```
 
-### 14. View Reader Markdown in Terminal
+### 15. View Reader Markdown in Terminal
 ```bash
 timecapsule view tc_20261018000400_a3f19e8c
 ```
