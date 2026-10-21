@@ -12,6 +12,7 @@ import (
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
 	"github.com/Noooblien/timecapsule/pkg/diff"
+	"github.com/Noooblien/timecapsule/pkg/memento"
 	"github.com/Noooblien/timecapsule/pkg/reader"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/visualdiff"
@@ -50,14 +51,24 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/markdown/", s.handleMarkdown)
 	s.mux.HandleFunc("/reader/", s.handleReader)
 	s.mux.HandleFunc("/warc/", s.handleWARC)
+	s.mux.HandleFunc("/timegate/", s.handleTimeGate)
+	s.mux.HandleFunc("/timemap/", s.handleTimeMap)
 
 	return s
 }
 
-// ServeHTTP dispatches requests, handling uncleaned double-slash URLs for /web/ directly.
+// ServeHTTP dispatches requests, handling uncleaned double-slash URLs for /web/, /timegate/, and /timemap/ directly.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/web/") {
 		s.handleWaybackReplay(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/timegate/") {
+		s.handleTimeGate(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/timemap/") {
+		s.handleTimeMap(w, r)
 		return
 	}
 	s.mux.ServeHTTP(w, r)
@@ -240,6 +251,14 @@ func (s *Server) handleWaybackReplay(w http.ResponseWriter, r *http.Request) {
 		`</div><div style="height:42px;"></div>`, snap.Timestamp.Format(time.RFC1123), snap.ContentHash[:8], snap.URL)
 
 	injectedHTML := injectBanner(snap.HTML, banner)
+	baseURL := fmt.Sprintf("http://%s", r.Host)
+	provider := &storeMementoProvider{store: s.store, baseURL: baseURL}
+	if mems, err := provider.GetMementos(snap.URL); err == nil && len(mems) > 0 {
+		tg := memento.NewTimeGate(snap.URL, baseURL, mems)
+		res, _ := tg.Resolve(snap.Timestamp)
+		w.Header().Set("Memento-Datetime", snap.Timestamp.Format(memento.RFC1123Format))
+		w.Header().Set("Link", tg.BuildLinkHeader(res))
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(injectedHTML))
 }
@@ -618,4 +637,37 @@ func (s *Server) handleAPIWatchers(w http.ResponseWriter, r *http.Request) {
 		"events":  engine.GetEvents(""),
 	}
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type storeMementoProvider struct {
+	store   *storage.Store
+	baseURL string
+}
+
+func (p *storeMementoProvider) GetMementos(originalURL string) ([]*memento.Memento, error) {
+	snaps := p.store.GetHistory(originalURL)
+	var list []*memento.Memento
+	for _, snap := range snaps {
+		list = append(list, &memento.Memento{
+			URI:         fmt.Sprintf("%s/web/%s/%s", p.baseURL, snap.WaybackTS, snap.URL),
+			Datetime:    snap.Timestamp,
+			OriginalURL: snap.URL,
+			MimeType:    snap.ContentType,
+			StatusCode:  snap.StatusCode,
+			Digest:      snap.ContentHash,
+		})
+	}
+	return list, nil
+}
+
+func (s *Server) handleTimeGate(w http.ResponseWriter, r *http.Request) {
+	baseURL := fmt.Sprintf("http://%s", r.Host)
+	handler := memento.NewServerHandler(baseURL, &storeMementoProvider{store: s.store, baseURL: baseURL})
+	handler.HandleTimeGate(w, r)
+}
+
+func (s *Server) handleTimeMap(w http.ResponseWriter, r *http.Request) {
+	baseURL := fmt.Sprintf("http://%s", r.Host)
+	handler := memento.NewServerHandler(baseURL, &storeMementoProvider{store: s.store, baseURL: baseURL})
+	handler.HandleTimeMap(w, r)
 }

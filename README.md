@@ -23,6 +23,7 @@ Zero external dependencies. Blazing fast. Single binary. Generates standard ISO 
 - ⏳ **Wayback Time-Travel Replay**: Built-in HTTP replay server recreating the Wayback Machine URL structure (`/web/<timestamp>/<url>`) with retro archive banners.
 - ⇄ **Temporal Snapshot Diffing**: Compare two captures across time with LCS (Longest Common Subsequence) diffing, similarity metrics, and visual color highlights.
 - 👁️ **Automated Page Watcher**: Continuously monitor any web page for changes, auto-archiving new revisions and printing real-time diffs.
+- ⏳ **RFC 7089 Memento Framework**: Time-travel datetime negotiation via `Accept-Datetime`, TimeGate nearest-neighbor resolution, and canonical `application/link-format` or JSON TimeMaps.
 - 🛡️ **Cryptographic Proof of Archival & Merkle Authenticity**: 5-leaf SHA-256 Merkle tree verification, Ed25519 digital signature chain of custody, isolated leaf-level forensic tamper detection, and JSON/Markdown attestation receipts for legal audit trails.
 - 🔍 **Full-Text Search**: Search through historical pages by title, URL, or article content.
 - 🖥️ **Modern Dark-Mode Dashboard**: Lightweight built-in web interface for preserving, diffing, and exploring historical snapshots.
@@ -219,6 +220,28 @@ timecapsule attest --id tc_20261018000400_a3f19e8c --receipt receipt.json
 
 # Verify cryptographic receipt with tamper check
 timecapsule attest --verify receipt.json --strict
+```
+
+### 17. RFC 7089 Memento TimeGate & TimeMap Engine (`timecapsule memento`)
+Full compliance with the IETF RFC 7089 web archival time-travel standard. Enables datetime negotiation via `Accept-Datetime`, TimeGate nearest-neighbor resolution, and canonical `application/link-format` or JSON TimeMaps:
+```bash
+# Run 4-scenario temporal negotiation and TimeGate interpolation demo
+timecapsule memento --demo
+
+# Generate Mermaid sequence diagram of RFC 7089 datetime negotiation
+timecapsule memento --demo --mermaid
+
+# Negotiate closest memento to target date via TimeGate
+timecapsule memento timegate https://news.ycombinator.com -time "2024-02-15T18:30:00Z"
+
+# Retrieve complete chronological TimeMap in RFC 7089 link-format or JSON
+timecapsule memento timemap https://news.ycombinator.com -format link
+timecapsule memento timemap https://news.ycombinator.com -format json
+
+# HTTP Server Endpoints:
+# GET http://localhost:8080/timegate/{url...}   (Accept-Datetime: Tue, 20 Mar 2026 18:00:00 GMT -> 302 Found)
+# GET http://localhost:8080/timemap/link/{url...} (application/link-format)
+# GET http://localhost:8080/timemap/json/{url...} (application/json)
 ```
 
 ---

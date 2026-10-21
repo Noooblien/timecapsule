@@ -19,6 +19,7 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/bench"
 	"github.com/Noooblien/timecapsule/pkg/bundle"
 	"github.com/Noooblien/timecapsule/pkg/diff"
+	"github.com/Noooblien/timecapsule/pkg/memento"
 	"github.com/Noooblien/timecapsule/pkg/reader"
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
@@ -728,6 +729,127 @@ func main() {
 			fmt.Printf("Server exited: %v\n", err)
 		}
 
+	case "memento":
+		mementoCmd := flag.NewFlagSet("memento", flag.ExitOnError)
+		demo := mementoCmd.Bool("demo", false, "Run 4-scenario RFC 7089 Memento time-travel and temporal resolution demo")
+		subaction := mementoCmd.String("action", "", "Subaction: timegate | timemap")
+		targetURL := mementoCmd.String("url", "", "Original target URL")
+		reqTimeStr := mementoCmd.String("time", "", "Target datetime (e.g. '2024-02-15T18:30:00Z' or RFC 1123)")
+		format := mementoCmd.String("format", "text", "Output format: text | link | json | markdown")
+		mermaid := mementoCmd.Bool("mermaid", false, "Render Mermaid sequence diagram of RFC 7089 negotiation")
+		dataDir := mementoCmd.String("dir", defaultDataDir, "Storage directory")
+		_ = mementoCmd.Parse(os.Args[2:])
+
+		if *demo || (len(os.Args) <= 2 && *targetURL == "") {
+			summary := memento.RunMementoDemo()
+			switch *format {
+			case "markdown":
+				for i, res := range summary.Resolutions {
+					fmt.Println(memento.RenderMarkdownReport(res, summary.Scenarios[i].OriginalURL, summary.LinkHeaders[i]))
+				}
+			case "json":
+				bytes, _ := json.MarshalIndent(summary, "", "  ")
+				fmt.Println(string(bytes))
+			default:
+				for i, res := range summary.Resolutions {
+					fmt.Print(memento.RenderScorecard(res, summary.Scenarios[i].OriginalURL, summary.LinkHeaders[i]))
+					if *mermaid {
+						fmt.Println(memento.RenderMermaidDiagram(res, summary.Scenarios[i].OriginalURL))
+					}
+				}
+				fmt.Printf("\n\033[1;32m✓ Memento RFC 7089 Demo Complete.\033[0m Evaluated %d scenarios (%d successful resolutions).\n\n",
+					summary.TotalScenarios, summary.Successful)
+			}
+			return
+		}
+
+		args := mementoCmd.Args()
+		action := *subaction
+		urlArg := *targetURL
+
+		if action == "" && len(args) > 0 {
+			action = args[0]
+			if len(args) > 1 {
+				urlArg = args[1]
+			}
+		}
+
+		if urlArg == "" {
+			fmt.Println("Error: Target URL required. Usage: timecapsule memento [timegate|timemap] <url> [-time <date>]")
+			os.Exit(1)
+		}
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			fmt.Printf("Storage error: %v\n", err)
+			os.Exit(1)
+		}
+
+		history := store.GetHistory(urlArg)
+		if len(history) == 0 {
+			fmt.Printf("No archived mementos found for %s\n", urlArg)
+			os.Exit(1)
+		}
+
+		baseURL := "http://localhost:8080"
+		var mementosList []*memento.Memento
+		for _, snap := range history {
+			mementosList = append(mementosList, &memento.Memento{
+				URI:         fmt.Sprintf("%s/web/%s/%s", baseURL, snap.WaybackTS, snap.URL),
+				Datetime:    snap.Timestamp,
+				OriginalURL: snap.URL,
+				MimeType:    snap.ContentType,
+				StatusCode:  snap.StatusCode,
+				Digest:      snap.ContentHash,
+			})
+		}
+
+		if action == "timemap" {
+			tm := memento.NewTimeMap(urlArg, baseURL, mementosList)
+			if *format == "json" {
+				b, _ := tm.FormatJSON()
+				fmt.Println(string(b))
+			} else {
+				fmt.Print(tm.FormatLinkFormat())
+			}
+			return
+		}
+
+		// Default: timegate
+		tg := memento.NewTimeGate(urlArg, baseURL, mementosList)
+		targetTime := time.Now().UTC()
+		if *reqTimeStr != "" {
+			if parsed, err := memento.ParseHTTPDate(*reqTimeStr); err == nil {
+				targetTime = parsed
+			} else {
+				fmt.Printf("Invalid datetime '%s': %v\n", *reqTimeStr, err)
+				os.Exit(1)
+			}
+		}
+
+		res, err := tg.Resolve(targetTime)
+		if err != nil {
+			fmt.Printf("Resolution error: %v\n", err)
+			os.Exit(1)
+		}
+
+		links := tg.BuildLinkHeader(res)
+		switch *format {
+		case "markdown":
+			fmt.Println(memento.RenderMarkdownReport(res, urlArg, links))
+		case "json":
+			bytes, _ := json.MarshalIndent(res, "", "  ")
+			fmt.Println(string(bytes))
+		case "link":
+			fmt.Println(links)
+		default:
+			fmt.Print(memento.RenderScorecard(res, urlArg, links))
+			if *mermaid {
+				fmt.Println(memento.RenderMermaidDiagram(res, urlArg))
+			}
+		}
+		return
+
 	case "bench":
 		benchCmd := flag.NewFlagSet("bench", flag.ExitOnError)
 		demo := benchCmd.Bool("demo", false, "Run comprehensive 4-corpus archival benchmark suite")
@@ -968,6 +1090,7 @@ Commands:
   export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
   import <file>     Import an external ISO 28500 WARC archive into TimeCapsule
   cdx [url]         Generate standard CDXJ 1.1 capture index
+  memento [opts]    RFC 7089 TimeGate datetime negotiation & TimeMap link-format index
   list              List all archived web page snapshots
   search <query>    Full-text search through preserved pages
   view <id>         Display the clean extracted markdown for a snapshot
@@ -975,6 +1098,9 @@ Commands:
   version           Show TimeCapsule version
 
 Examples:
+  timecapsule memento --demo [--mermaid] [--format text|markdown|json]
+  timecapsule memento timegate https://news.ycombinator.com -time "2024-02-15T18:30:00Z"
+  timecapsule memento timemap https://news.ycombinator.com -format link
   timecapsule attest --demo [--mermaid] [--format text|markdown|json]
   timecapsule attest -id tc_123 [--receipt receipt.json] [-strict]
   timecapsule save https://news.ycombinator.com
