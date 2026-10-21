@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/memento"
 	"github.com/Noooblien/timecapsule/pkg/reader"
+	"github.com/Noooblien/timecapsule/pkg/timeline"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/visualdiff"
 	"github.com/Noooblien/timecapsule/pkg/warc"
@@ -53,6 +53,8 @@ func NewServer(store *storage.Store, archiver *archive.Archiver) *Server {
 	s.mux.HandleFunc("/warc/", s.handleWARC)
 	s.mux.HandleFunc("/timegate/", s.handleTimeGate)
 	s.mux.HandleFunc("/timemap/", s.handleTimeMap)
+	s.mux.HandleFunc("/timeline/", s.handleTimeline)
+	s.mux.HandleFunc("/api/timeline/", s.handleAPITimeline)
 
 	return s
 }
@@ -69,6 +71,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/timemap/") {
 		s.handleTimeMap(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/timeline/") {
+		s.handleTimeline(w, r)
 		return
 	}
 	s.mux.ServeHTTP(w, r)
@@ -245,13 +251,12 @@ func (s *Server) handleWaybackReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	banner := fmt.Sprintf(`<div style="position:fixed;top:0;left:0;right:0;height:42px;background:#161b22;border-bottom:2px solid #238636;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.5);">`+
-		`<div><strong>⏳ TimeCapsule Archive</strong> &bull; Snapshot from <code>%s</code> (Hash: <code>%s</code>)</div>`+
-		`<div><a href="%s" target="_blank" style="color:#58a6ff;margin-right:15px;text-decoration:none;">Original Live URL ↗</a><a href="/" style="color:#7ee787;text-decoration:none;font-weight:bold;">← Exit Archive</a></div>`+
-		`</div><div style="height:42px;"></div>`, snap.Timestamp.Format(time.RFC1123), snap.ContentHash[:8], snap.URL)
+	baseURL := fmt.Sprintf("http://%s", r.Host)
+	snaps := s.store.GetHistory(snap.URL)
+	nav := timeline.BuildNavContext(baseURL, snaps, snap)
+	banner := timeline.RenderWaybackBanner(nav)
 
 	injectedHTML := injectBanner(snap.HTML, banner)
-	baseURL := fmt.Sprintf("http://%s", r.Host)
 	provider := &storeMementoProvider{store: s.store, baseURL: baseURL}
 	if mems, err := provider.GetMementos(snap.URL); err == nil && len(mems) > 0 {
 		tg := memento.NewTimeGate(snap.URL, baseURL, mems)
@@ -579,6 +584,7 @@ button:hover { opacity: 0.9; }
       <div class="card-url">%s &bull; <span class="badge">%d bytes</span> &bull; <span class="badge">%d assets</span></div>
       <div class="card-actions">
         <a href="/web/%s/%s" target="_blank">Replay in Wayback ⏳</a>
+        <a href="/timeline/%s" target="_blank" style="color:#58a6ff;border:1px solid #1f6feb44;">Timeline 📅</a>
         %s
         <a href="/reader/%s" target="_blank">Reader Mode 📖</a>
         <a href="/raw/%s" target="_blank">Raw HTML</a>
@@ -590,6 +596,7 @@ button:hover { opacity: 0.9; }
 				snap.Timestamp.Format("Jan 02, 2006 15:04:05 UTC"),
 				html.EscapeString(snap.URL), snap.SizeBytes, snap.AssetCount,
 				snap.WaybackTS, snap.URL,
+				snap.URL,
 				diffBtn,
 				snap.ID, snap.ID, snap.ID, snap.ID)
 		}
@@ -670,4 +677,44 @@ func (s *Server) handleTimeMap(w http.ResponseWriter, r *http.Request) {
 	baseURL := fmt.Sprintf("http://%s", r.Host)
 	handler := memento.NewServerHandler(baseURL, &storeMementoProvider{store: s.store, baseURL: baseURL})
 	handler.HandleTimeMap(w, r)
+}
+
+func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.TrimPrefix(r.URL.Path, "/timeline/")
+	if trimmed == "" {
+		http.Error(w, "Missing target URL in timeline path. Format: /timeline/{url}", http.StatusBadRequest)
+		return
+	}
+	targetURL := trimmed
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		targetURL = "https://" + targetURL
+	}
+
+	snaps := s.store.GetHistory(targetURL)
+	baseURL := fmt.Sprintf("http://%s", r.Host)
+	tl := timeline.BuildTimeline(baseURL, targetURL, snaps)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(timeline.RenderTimelinePage(tl)))
+}
+
+func (s *Server) handleAPITimeline(w http.ResponseWriter, r *http.Request) {
+	targetURL := strings.TrimPrefix(r.URL.Path, "/api/timeline/")
+	if targetURL == "" {
+		targetURL = r.URL.Query().Get("url")
+	}
+	if targetURL == "" {
+		http.Error(w, `{"error":"missing url"}`, http.StatusBadRequest)
+		return
+	}
+	if !strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://") {
+		targetURL = "https://" + targetURL
+	}
+
+	snaps := s.store.GetHistory(targetURL)
+	baseURL := fmt.Sprintf("http://%s", r.Host)
+	tl := timeline.BuildTimeline(baseURL, targetURL, snaps)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(tl)
 }

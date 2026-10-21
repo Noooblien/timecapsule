@@ -21,6 +21,7 @@ import (
 	"github.com/Noooblien/timecapsule/pkg/diff"
 	"github.com/Noooblien/timecapsule/pkg/memento"
 	"github.com/Noooblien/timecapsule/pkg/reader"
+	"github.com/Noooblien/timecapsule/pkg/timeline"
 	"github.com/Noooblien/timecapsule/pkg/server"
 	"github.com/Noooblien/timecapsule/pkg/storage"
 	"github.com/Noooblien/timecapsule/pkg/visualdiff"
@@ -729,6 +730,52 @@ func main() {
 			fmt.Printf("Server exited: %v\n", err)
 		}
 
+	case "timeline":
+		tlCmd := flag.NewFlagSet("timeline", flag.ExitOnError)
+		dataDir := tlCmd.String("dir", defaultDataDir, "Storage directory")
+		demo := tlCmd.Bool("demo", false, "Run with simulated multi-year timeline")
+		mermaid := tlCmd.Bool("mermaid", false, "Output Mermaid sequence / timeline block")
+		format := tlCmd.String("format", "text", "Output format: text, json, mermaid, html")
+		_ = tlCmd.Parse(os.Args[2:])
+
+		var tl *timeline.URLTimeline
+		if *demo {
+			tl = timeline.GenerateDemoTimeline("https://example.com/blog")
+		} else {
+			args := tlCmd.Args()
+			if len(args) < 1 {
+				fmt.Println("Error: Target URL required. Usage: timecapsule timeline <url> [--demo] [--mermaid]")
+				os.Exit(1)
+			}
+			targetURL := args[0]
+			store, err := storage.NewStore(*dataDir)
+			if err != nil {
+				log.Fatalf("Failed to open storage: %v", err)
+			}
+			snaps := store.GetHistory(targetURL)
+			if len(snaps) == 0 {
+				fmt.Printf("No archived snapshots found for '%s' in %s\n", targetURL, *dataDir)
+				os.Exit(1)
+			}
+			tl = timeline.BuildTimeline("http://localhost:8080", targetURL, snaps)
+		}
+
+		switch *format {
+		case "json":
+			bytes, _ := json.MarshalIndent(tl, "", "  ")
+			fmt.Println(string(bytes))
+		case "html":
+			fmt.Println(timeline.RenderTimelinePage(tl))
+		case "mermaid":
+			fmt.Println(timeline.RenderTimelineMermaid(tl))
+		default:
+			fmt.Print(timeline.RenderASCIITimeline(tl))
+			if *mermaid {
+				fmt.Println(timeline.RenderTimelineMermaid(tl))
+			}
+		}
+		return
+
 	case "memento":
 		mementoCmd := flag.NewFlagSet("memento", flag.ExitOnError)
 		demo := mementoCmd.Bool("demo", false, "Run 4-scenario RFC 7089 Memento time-travel and temporal resolution demo")
@@ -1090,6 +1137,7 @@ Commands:
   export <id>       Export snapshot as multi-record ISO 28500 WARC (optional --gzip)
   import <file>     Import an external ISO 28500 WARC archive into TimeCapsule
   cdx [url]         Generate standard CDXJ 1.1 capture index
+  timeline [opts]   Interactive temporal replay timeline & capture frequency histogram
   memento [opts]    RFC 7089 TimeGate datetime negotiation & TimeMap link-format index
   list              List all archived web page snapshots
   search <query>    Full-text search through preserved pages
@@ -1098,6 +1146,8 @@ Commands:
   version           Show TimeCapsule version
 
 Examples:
+  timecapsule timeline https://news.ycombinator.com [--mermaid]
+  timecapsule timeline --demo [--mermaid] [--format text|json|mermaid|html]
   timecapsule memento --demo [--mermaid] [--format text|markdown|json]
   timecapsule memento timegate https://news.ycombinator.com -time "2024-02-15T18:30:00Z"
   timecapsule memento timemap https://news.ycombinator.com -format link
