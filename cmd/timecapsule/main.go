@@ -7,12 +7,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"encoding/json"
+	"log"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/Noooblien/timecapsule/pkg/archive"
+	"github.com/Noooblien/timecapsule/pkg/attest"
 	"github.com/Noooblien/timecapsule/pkg/bench"
 	"github.com/Noooblien/timecapsule/pkg/bundle"
 	"github.com/Noooblien/timecapsule/pkg/diff"
@@ -749,6 +752,122 @@ func main() {
 			return
 		}
 
+	case "attest":
+		attestCmd := flag.NewFlagSet("attest", flag.ExitOnError)
+		demo := attestCmd.Bool("demo", false, "Run 4-scenario cryptographic provenance and tamper detection demonstration")
+		id := attestCmd.String("id", "", "Snapshot ID to attest or verify")
+		receiptPath := attestCmd.String("receipt", "", "Path to existing AttestationReceipt JSON file for verification")
+		authorityID := attestCmd.String("authority", "timecapsule-notary-local", "Notary Authority identifier")
+		dataDir := attestCmd.String("dir", defaultDataDir, "Storage directory")
+		mermaid := attestCmd.Bool("mermaid", false, "Render Mermaid diagram of Merkle Tree hierarchy")
+		format := attestCmd.String("format", "text", "Output format: text | markdown | json")
+		strict := attestCmd.Bool("strict", false, "Exit with code 1 if tamper or invalid signature detected")
+		_ = attestCmd.Parse(os.Args[2:])
+
+		if *demo || (*id == "" && len(os.Args) <= 2) {
+			summary, err := attest.RunDemoSuite()
+			if err != nil {
+				log.Fatalf("Attestation demo failed: %v", err)
+			}
+
+			switch *format {
+			case "markdown":
+				fmt.Println(attest.RenderAttestationMarkdown(summary))
+			case "json":
+				bytes, _ := json.MarshalIndent(summary, "", "  ")
+				fmt.Println(string(bytes))
+			default:
+				fmt.Print(attest.RenderAttestationScorecard(summary))
+				if *mermaid && len(summary.Results) > 0 {
+					receipt := &attest.AttestationReceipt{
+						MerkleRoot: summary.Results[0].ReceiptID,
+						Leaves: []attest.MerkleLeaf{
+							{Type: attest.LeafHTTPMetadata, Hash: "meta-digest"},
+							{Type: attest.LeafHTMLDOM, Hash: "html-dom-digest"},
+							{Type: attest.LeafReaderMarkdown, Hash: "reader-md-digest"},
+							{Type: attest.LeafArchiveManifest, Hash: "envelope-digest"},
+							{Type: attest.LeafAssetManifest, Hash: "assets-digest"},
+						},
+					}
+					fmt.Println(attest.RenderMerkleTreeMermaid(receipt, &summary.Results[0]))
+				}
+				fmt.Printf("\n\033[1;32m✓ Attestation Demo Complete.\033[0m Evaluated %d snapshots (%d verified, %d tampered, %d invalid signatures).\n\n",
+					summary.TotalEvaluated, summary.VerifiedCount, summary.TamperCount, summary.InvalidSignatureCount)
+			}
+
+			if *strict && (summary.TamperCount > 0 || summary.InvalidSignatureCount > 0) {
+				os.Exit(1)
+			}
+			return
+		}
+
+		store, err := storage.NewStore(*dataDir)
+		if err != nil {
+			log.Fatalf("Failed to open storage: %v", err)
+		}
+
+		snap, ok := store.Get(*id)
+		if !ok {
+			log.Fatalf("Snapshot %s not found in %s", *id, *dataDir)
+		}
+
+		if *receiptPath != "" {
+			receiptBytes, err := os.ReadFile(*receiptPath)
+			if err != nil {
+				log.Fatalf("Failed to read receipt file %s: %v", *receiptPath, err)
+			}
+			var receipt attest.AttestationReceipt
+			if err := json.Unmarshal(receiptBytes, &receipt); err != nil {
+				log.Fatalf("Invalid JSON in receipt file: %v", err)
+			}
+
+			res := attest.VerifySnapshot(&receipt, snap)
+			summ := attest.AttestationSummary{
+				TotalEvaluated: 1,
+				Results:        []attest.VerificationResult{*res},
+			}
+			if res.Status == attest.StatusVerified {
+				summ.VerifiedCount = 1
+			} else if res.Status == attest.StatusTamperDetected {
+				summ.TamperCount = 1
+			} else {
+				summ.InvalidSignatureCount = 1
+			}
+
+			switch *format {
+			case "markdown":
+				fmt.Println(attest.RenderAttestationMarkdown(summ))
+			case "json":
+				bytes, _ := json.MarshalIndent(res, "", "  ")
+				fmt.Println(string(bytes))
+			default:
+				fmt.Print(attest.RenderAttestationScorecard(summ))
+				if *mermaid {
+					fmt.Println(attest.RenderMerkleTreeMermaid(&receipt, res))
+				}
+			}
+
+			if *strict && res.Status != attest.StatusVerified {
+				os.Exit(1)
+			}
+			return
+		}
+
+		// Sign snapshot and issue receipt
+		auth, err := attest.NewAuthority(*authorityID)
+		if err != nil {
+			log.Fatalf("Failed to initialize notary authority: %v", err)
+		}
+
+		receipt, err := auth.SignSnapshot(snap)
+		if err != nil {
+			log.Fatalf("Failed to sign snapshot: %v", err)
+		}
+
+		receiptBytes, _ := json.MarshalIndent(receipt, "", "  ")
+		fmt.Println(string(receiptBytes))
+		return
+
 	case "verify":
 		verifyCmd := flag.NewFlagSet("verify", flag.ExitOnError)
 		dataDir := verifyCmd.String("dir", defaultDataDir, "Storage directory")
@@ -838,6 +957,7 @@ Usage:
 
 Commands:
   save <url>        Capture and preserve a web page snapshot (HTML, WARC, Markdown)
+  attest [options]  Cryptographic Merkle tree provenance, Ed25519 signing & tamper verification
   reader <target>   Convert webpage/snapshot into clean reader Markdown or standalone HTML
   bundle <target>   Serialize verbatim DOM into a self-contained single-file HTML bundle
   verify <id|file>  Verify archival fidelity, ISO 28500 WARC compliance, and leak isolation
@@ -855,6 +975,8 @@ Commands:
   version           Show TimeCapsule version
 
 Examples:
+  timecapsule attest --demo [--mermaid] [--format text|markdown|json]
+  timecapsule attest -id tc_123 [--receipt receipt.json] [-strict]
   timecapsule save https://news.ycombinator.com
   timecapsule reader https://news.ycombinator.com --frontmatter
   timecapsule bundle https://news.ycombinator.com --out hn.single.html
